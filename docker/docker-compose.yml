@@ -86,8 +86,8 @@
     image: python:3.11-slim
     container_name: rapid-init
     environment:
-      KAGGLE_USERNAME: "YOUR_KAGGLE_USERNAME_HERE"   # <-- fill this
-      KAGGLE_KEY: "YOUR_KAGGLE_KEY_HERE"             # <-- fill this
+      KAGGLE_USERNAME: "Hamza Lahbal"   # <-- fill this
+      KAGGLE_KEY: "KGAT_b96a262981b831cd15017061d2b1ace0"             # <-- fill this
     volumes:
       - ../data/raw:/data/raw
       - ./init.sh:/init.sh
