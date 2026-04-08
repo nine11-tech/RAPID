@@ -1,6 +1,8 @@
-﻿services:
+services:
 
-  # ─── ZOOKEEPER ───────────────────────────────────────────
+  # -----------------------------------------------------------
+  # ZOOKEEPER - Kafka coordinator
+  # -----------------------------------------------------------
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: zookeeper
@@ -11,8 +13,11 @@
       ZOOKEEPER_TICK_TIME: 2000
     networks:
       - rapid-net
+    restart: unless-stopped
 
-  # ─── KAFKA ───────────────────────────────────────────────
+  # -----------------------------------------------------------
+  # KAFKA - Message streaming (Speed Layer)
+  # -----------------------------------------------------------
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: kafka
@@ -24,12 +29,21 @@
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     depends_on:
       - zookeeper
     networks:
       - rapid-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      retries: 10
+      start_period: 30s
 
-  # ─── HADOOP NAMENODE ─────────────────────────────────────
+  # -----------------------------------------------------------
+  # HADOOP NAMENODE - HDFS master (Batch Layer)
+  # -----------------------------------------------------------
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
@@ -44,13 +58,16 @@
       - namenode_data:/hadoop/dfs/name
     networks:
       - rapid-net
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9870"]
       interval: 10s
       retries: 10
       start_period: 30s
 
-  # ─── HADOOP DATANODE ─────────────────────────────────────
+  # -----------------------------------------------------------
+  # HADOOP DATANODE - HDFS storage (Batch Layer)
+  # -----------------------------------------------------------
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode
@@ -66,8 +83,11 @@
       - namenode
     networks:
       - rapid-net
+    restart: unless-stopped
 
-  # ─── HBASE ───────────────────────────────────────────────
+  # -----------------------------------------------------------
+  # HBASE - NoSQL for batch views (ip_reputation, attack_patterns)
+  # -----------------------------------------------------------
   hbase:
     image: dajobe/hbase:latest
     container_name: hbase
@@ -78,26 +98,139 @@
       - "16030:16030"
     networks:
       - rapid-net
+    restart: unless-stopped
 
-  # ─── INIT: Download dataset from Kaggle ──────────────────
-  # Each teammate fills in their own Kaggle credentials below
-  # Get yours at: https://www.kaggle.com/settings → API → Create New Token
-  init:
-    image: python:3.11-slim
-    container_name: rapid-init
+  # -----------------------------------------------------------
+  # SPARK MASTER - Batch + Streaming engine
+  # -----------------------------------------------------------
+  spark-master:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
     environment:
-      KAGGLE_USERNAME: "YOUR_KAGGLE_USERNAME_HERE"   # <-- fill this
-      KAGGLE_KEY: "YOUR_KAGGLE_KEY_HERE"             # <-- fill this
-    volumes:
-      - ../data/raw:/data/raw
-      - ./init.sh:/init.sh
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
     networks:
       - rapid-net
-    entrypoint: sh /init.sh
+    restart: unless-stopped
+
+  # -----------------------------------------------------------
+  # SPARK WORKER - Executes Spark jobs
+  # -----------------------------------------------------------
+  spark-worker:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    depends_on:
+      - spark-master
+    networks:
+      - rapid-net
+    restart: unless-stopped
+
+  # -----------------------------------------------------------
+  # CASSANDRA - Real-time threat storage (Speed Layer)
+  # -----------------------------------------------------------
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=rapid-cluster
+      - CASSANDRA_DC=dc1
+      - HEAP_NEWSIZE=128M
+      - MAX_HEAP_SIZE=512M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - rapid-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      retries: 10
+      start_period: 60s
+
+  # -----------------------------------------------------------
+  # KAFKA SETUP - Creates cybersecurity-logs topic (3 partitions)
+  # Runs once after Kafka is healthy then exits
+  # -----------------------------------------------------------
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-setup
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - rapid-net
+    entrypoint: >
+      bash -c "
+        echo '>>> Creating Kafka topic: cybersecurity-logs...' &&
+        kafka-topics --bootstrap-server kafka:9092
+          --create --if-not-exists
+          --topic cybersecurity-logs
+          --partitions 3
+          --replication-factor 1 &&
+        echo '>>> Topic created!' &&
+        kafka-topics --bootstrap-server kafka:9092 --list &&
+        echo '>>> Kafka setup complete!'
+      "
     restart: "no"
 
-  # ─── HDFS SETUP: Create partitions + load CSV ────────────
-  # Runs automatically after namenode is healthy
+  # -----------------------------------------------------------
+  # CASSANDRA SETUP - Creates keyspace + tables for Sprint 2
+  # Runs once after Cassandra is healthy then exits
+  # -----------------------------------------------------------
+  cassandra-setup:
+    image: cassandra:4.1
+    container_name: cassandra-setup
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    networks:
+      - rapid-net
+    entrypoint: >
+      bash -c "
+        echo '>>> Setting up Cassandra schema...' &&
+        cqlsh cassandra -e \"
+          CREATE KEYSPACE IF NOT EXISTS rapid
+            WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+          USE rapid;
+
+          CREATE TABLE IF NOT EXISTS realtime_threats (
+            ip_source     text PRIMARY KEY,
+            last_seen     timestamp,
+            threat_score  float,
+            attack_types  list<text>
+          );
+
+          CREATE TABLE IF NOT EXISTS recent_attacks (
+            id          uuid PRIMARY KEY,
+            ip_source   text,
+            timestamp   timestamp,
+            attack_type text,
+            protocol    text,
+            bytes       bigint
+          );
+        \" &&
+        echo '>>> Cassandra schema ready!'
+      "
+    restart: "no"
+
+  # -----------------------------------------------------------
+  # HDFS SETUP - Creates partitions + loads CSV
+  # Runs once after namenode is healthy then exits
+  # -----------------------------------------------------------
   hdfs-setup:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: rapid-hdfs-setup
@@ -112,7 +245,7 @@
       - rapid-net
     entrypoint: >
       bash -c "
-        echo '>>> [1/3] Creating HDFS partition structure...' &&
+        echo '>>> Creating HDFS partition structure...' &&
         hdfs dfs -mkdir -p
           /logs/year=2024/month=01
           /logs/year=2024/month=02
@@ -128,23 +261,42 @@
           /logs/year=2024/month=12
           /data/cybersecurity/batch
           /data/cybersecurity/streaming &&
-        echo '>>> [2/3] Partitions created!' &&
-        echo '>>> [3/3] Loading CSV into HDFS...' &&
+        echo '>>> Partitions created!' &&
         if [ -f /data/raw/cybersecurity_threat_detection_logs.csv ]; then
+          echo '>>> Loading CSV into HDFS...' &&
           hdfs dfs -put -f /data/raw/cybersecurity_threat_detection_logs.csv /logs/year=2024/month=01/ &&
-          echo '>>> CSV loaded into HDFS successfully!' &&
-          hdfs dfs -ls -R /logs
+          echo '>>> CSV loaded successfully!' &&
+          hdfs dfs -ls /logs/year=2024/month=01/
         else
-          echo '>>> WARNING: CSV not found. Run the init service first!' &&
-          echo '>>> docker-compose up init'
+          echo '>>> WARNING: CSV not found in data/raw/' &&
+          echo '>>> Run: docker-compose up init   first!'
         fi &&
         echo '>>> HDFS setup complete!'
       "
     restart: "no"
 
+  # -----------------------------------------------------------
+  # INIT - Downloads dataset from Kaggle
+  # Credentials from your local .env file (never pushed to git)
+  # Copy .env.example to .env and fill in your details
+  # -----------------------------------------------------------
+  init:
+    image: python:3.11-slim
+    container_name: rapid-init
+    env_file:
+      - .env
+    volumes:
+      - ../data/raw:/data/raw
+      - ./init.sh:/init.sh
+    networks:
+      - rapid-net
+    entrypoint: sh /init.sh
+    restart: "no"
+
 volumes:
   namenode_data:
   datanode_data:
+  cassandra_data:
 
 networks:
   rapid-net:
