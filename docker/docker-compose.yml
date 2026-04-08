@@ -1,4 +1,4 @@
-services:
+﻿services:
 
   # ─── ZOOKEEPER ───────────────────────────────────────────
   zookeeper:
@@ -44,6 +44,11 @@ services:
       - namenode_data:/hadoop/dfs/name
     networks:
       - rapid-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
 
   # ─── HADOOP DATANODE ─────────────────────────────────────
   datanode:
@@ -73,6 +78,69 @@ services:
       - "16030:16030"
     networks:
       - rapid-net
+
+  # ─── INIT: Download dataset from Kaggle ──────────────────
+  # Each teammate fills in their own Kaggle credentials below
+  # Get yours at: https://www.kaggle.com/settings → API → Create New Token
+  init:
+    image: python:3.11-slim
+    container_name: rapid-init
+    environment:
+      KAGGLE_USERNAME: "YOUR_KAGGLE_USERNAME_HERE"   # <-- fill this
+      KAGGLE_KEY: "YOUR_KAGGLE_KEY_HERE"             # <-- fill this
+    volumes:
+      - ../data/raw:/data/raw
+      - ./init.sh:/init.sh
+    networks:
+      - rapid-net
+    entrypoint: sh /init.sh
+    restart: "no"
+
+  # ─── HDFS SETUP: Create partitions + load CSV ────────────
+  # Runs automatically after namenode is healthy
+  hdfs-setup:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: rapid-hdfs-setup
+    depends_on:
+      namenode:
+        condition: service_healthy
+    volumes:
+      - ../data/raw:/data/raw
+    env_file:
+      - ./hadoop.env
+    networks:
+      - rapid-net
+    entrypoint: >
+      bash -c "
+        echo '>>> [1/3] Creating HDFS partition structure...' &&
+        hdfs dfs -mkdir -p
+          /logs/year=2024/month=01
+          /logs/year=2024/month=02
+          /logs/year=2024/month=03
+          /logs/year=2024/month=04
+          /logs/year=2024/month=05
+          /logs/year=2024/month=06
+          /logs/year=2024/month=07
+          /logs/year=2024/month=08
+          /logs/year=2024/month=09
+          /logs/year=2024/month=10
+          /logs/year=2024/month=11
+          /logs/year=2024/month=12
+          /data/cybersecurity/batch
+          /data/cybersecurity/streaming &&
+        echo '>>> [2/3] Partitions created!' &&
+        echo '>>> [3/3] Loading CSV into HDFS...' &&
+        if [ -f /data/raw/cybersecurity_threat_detection_logs.csv ]; then
+          hdfs dfs -put -f /data/raw/cybersecurity_threat_detection_logs.csv /logs/year=2024/month=01/ &&
+          echo '>>> CSV loaded into HDFS successfully!' &&
+          hdfs dfs -ls -R /logs
+        else
+          echo '>>> WARNING: CSV not found. Run the init service first!' &&
+          echo '>>> docker-compose up init'
+        fi &&
+        echo '>>> HDFS setup complete!'
+      "
+    restart: "no"
 
 volumes:
   namenode_data:

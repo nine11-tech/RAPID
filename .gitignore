@@ -1,0 +1,17 @@
+﻿# Kaggle credentials - NEVER commit these
+docker/kaggle.json
+.kaggle/
+
+# Raw data - too large for git
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
