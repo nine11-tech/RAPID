@@ -298,4 +298,4 @@ volumes:
 
 networks:
   rapid-net:
-    driver: bridge
+    driver: bridgegit pull origin dev
