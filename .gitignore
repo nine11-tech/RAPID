@@ -1,0 +1,58 @@
+﻿# ── Secrets ────────────────────────────────────────────────
+.env
+!.env.example
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# ── Spark / Hadoop output ───────────────────────────────────
+data/batch_output/
+data/processed/
+data/raw/*.csv
+data/raw/*.parquet
+data/raw/*.json
+data/raw/*.zip
+
+# Parquet part files (Spark output)
+part-*
+_SUCCESS
+._SUCCESS.crc
+*.crc
+.part-*
+
+# ── Jupyter ─────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Java / Maven ────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+
+# ── IDE ─────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.suo
+*.user
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Docker ──────────────────────────────────────────────────
+docker/hadoop.env
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+*.csv
