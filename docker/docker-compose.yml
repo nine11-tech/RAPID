@@ -113,6 +113,9 @@ services:
       - SPARK_MODE=master
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
+    volumes:
+      - ../spark:/home/jovyan/work/spark
+      - ../data:/home/jovyan/work/data
     networks:
       - rapid-net
     restart: unless-stopped
@@ -130,6 +133,9 @@ services:
       - SPARK_WORKER_CORES=2
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
+    volumes:
+      - ../spark:/home/jovyan/work/spark
+      - ../data:/home/jovyan/work/data
     depends_on:
       - spark-master
     networks:
