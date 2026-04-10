@@ -1,4 +1,4 @@
-services:
+﻿services:
 
   # -----------------------------------------------------------
   # ZOOKEEPER - Kafka coordinator
@@ -168,7 +168,6 @@ services:
 
   # -----------------------------------------------------------
   # KAFKA SETUP - Creates cybersecurity-logs topic (3 partitions)
-  # Runs once after Kafka is healthy then exits
   # -----------------------------------------------------------
   kafka-setup:
     image: confluentinc/cp-kafka:7.4.0
@@ -193,8 +192,7 @@ services:
     restart: "no"
 
   # -----------------------------------------------------------
-  # CASSANDRA SETUP - Creates keyspace + tables for Sprint 2
-  # Runs once after Cassandra is healthy then exits
+  # CASSANDRA SETUP - Creates keyspace + tables
   # -----------------------------------------------------------
   cassandra-setup:
     image: cassandra:4.1
@@ -210,16 +208,13 @@ services:
         cqlsh cassandra -e \"
           CREATE KEYSPACE IF NOT EXISTS rapid
             WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-
           USE rapid;
-
           CREATE TABLE IF NOT EXISTS realtime_threats (
             ip_source     text PRIMARY KEY,
             last_seen     timestamp,
             threat_score  float,
             attack_types  list<text>
           );
-
           CREATE TABLE IF NOT EXISTS recent_attacks (
             id          uuid PRIMARY KEY,
             ip_source   text,
@@ -235,7 +230,6 @@ services:
 
   # -----------------------------------------------------------
   # HDFS SETUP - Creates partitions + loads CSV
-  # Runs once after namenode is healthy then exits
   # -----------------------------------------------------------
   hdfs-setup:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
@@ -283,8 +277,6 @@ services:
 
   # -----------------------------------------------------------
   # INIT - Downloads dataset from Kaggle
-  # Credentials from your local .env file (never pushed to git)
-  # Copy .env.example to .env and fill in your details
   # -----------------------------------------------------------
   init:
     image: python:3.11-slim
