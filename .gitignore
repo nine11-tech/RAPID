@@ -56,3 +56,10 @@ docker/hadoop.env
 *.log
 logs/
 *.csv
+data/raw/*.csv
+
+data/*.csv
+
+*.zip
+
+cybersecurity-threat-detection-logs.zip

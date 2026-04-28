@@ -12,7 +12,7 @@ spark.sparkContext.setLogLevel("WARN")
 # ─── Lecture depuis HDFS ──────────────────────────────────
 print(">>> Loading dataset from HDFS...")
 df = spark.read.csv(
-    "hdfs://namenode:9000/data/cybersecurity/logs/year=2024/month=10/day=15/cybersecurity_threat_detection_logs.csv",
+    "hdfs://namenode:9000/data/cybersecurity/logs/year=2024/month=01/cybersecurity_threat_detection_logs.csv",
     header=True,
     inferSchema=True
 )

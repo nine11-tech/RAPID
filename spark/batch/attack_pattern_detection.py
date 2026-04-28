@@ -192,4 +192,4 @@ save(
 )
 
 print("\n>>> Attack pattern detection complete!")
-spark.stop()c
+spark.stop()
