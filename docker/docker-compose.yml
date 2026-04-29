@@ -55,43 +55,45 @@ services:
 
   namenode:
     profiles: ["anass"]
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    image: rapid-hadoop:arm64
     container_name: namenode
+    hostname: namenode
     ports:
       - "9870:9870"
       - "9000:9000"
     environment:
-      - CLUSTER_NAME=rapid
-    env_file:
-      - ./hadoop.env
+      - JAVA_HOME=/usr/local/openjdk-11
+      - HADOOP_HOME=/opt/hadoop
+      - PATH=/opt/hadoop/bin:/opt/hadoop/sbin:/usr/local/openjdk-11/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
-      - namenode_data:/hadoop/dfs/name
+      - namenode_data:/data/namenode
     networks:
       - rapid-overlay
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["hdfs namenode"]
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9870"]
-      interval: 10s
-      retries: 10
-      start_period: 30s
 
   datanode:
     profiles: ["anass"]
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    image: rapid-hadoop:arm64
     container_name: datanode
+    hostname: datanode
     ports:
       - "9864:9864"
     environment:
-      - SERVICE_PRECONDITION=namenode:9870
-    env_file:
-      - ./hadoop.env
+      - JAVA_HOME=/usr/local/openjdk-11
+      - HADOOP_HOME=/opt/hadoop
+      - PATH=/opt/hadoop/bin:/opt/hadoop/sbin:/usr/local/openjdk-11/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
-      - datanode_data:/hadoop/dfs/data
-    depends_on:
-      - namenode
+      - datanode_data:/data/datanode
     networks:
       - rapid-overlay
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["hdfs datanode"]
+    depends_on:
+      - namenode
     restart: unless-stopped
+
 
   flask-api:
     profiles: ["anass"]
@@ -212,19 +214,24 @@ services:
       start_period: 60s
 
   hbase:
-    profiles: ["chawi"]
-    image: dajobe/hbase:latest
-    container_name: hbase
-    ports:
-      - "16000:16000"
-      - "16010:16010"
-      - "16020:16020"
-      - "16030:16030"
-    volumes:
-      - hbase_data:/data
-    networks:
-      - rapid-overlay
-    restart: unless-stopped
+      profiles: ["chawi"]
+      image: dajobe/hbase:latest
+      container_name: hbase
+      ports:
+        - "16000:16000"
+        - "16010:16010"
+        - "16020:16020"
+        - "16030:16030"
+        - "9090:9090"    
+        - "8080:8080"    
+      environment:
+        - HBASE_MASTER_OPTS=-Dhbase.master.info.port=16010 -Dhbase.master.info.bindAddress=0.0.0.0
+        - HBASE_REGIONSERVER_OPTS=-Dhbase.regionserver.info.port=16030 -Dhbase.regionserver.info.bindAddress=0.0.0.0
+      volumes:
+        - hbase_data:/data
+      networks:
+        - rapid-overlay
+      restart: unless-stopped
 
   nginx-dashboard:
     profiles: ["chawi"]
