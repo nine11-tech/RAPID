@@ -55,4 +55,15 @@ docker/hadoop.env
 # ── Logs ────────────────────────────────────────────────────
 *.log
 logs/
+<<<<<<< HEAD
 *.csv
+=======
+*.csv
+data/raw/*.csv
+
+data/*.csv
+
+*.zip
+
+cybersecurity-threat-detection-logs.zip
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615

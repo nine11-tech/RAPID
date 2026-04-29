@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 services:
 
   # -----------------------------------------------------------
@@ -307,3 +308,246 @@ volumes:
 networks:
   rapid-net:
     driver: bridge
+=======
+# RAPID — Docker Compose v2 · Swarm Edition
+# Each member runs ONLY their profile:
+#   Anass  : docker-compose --profile anass up -d
+#   Hamza  : docker-compose --profile hamza up -d
+#   Khalid : docker-compose --profile khalid up -d
+#   Chawi  : docker-compose --profile chawi up -d
+
+networks:
+  rapid-overlay:
+    external: true
+
+volumes:
+  namenode_data:
+  datanode_data:
+  cassandra_data:
+  hbase_data:
+
+# ============================================================
+# ANASS — 100.73.216.115
+# Services: zookeeper, kafka, namenode, datanode, flask-api
+# ============================================================
+services:
+
+  zookeeper:
+    profiles: ["anass"]
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  kafka:
+    profiles: ["anass"]
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${ANASS_IP}:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  namenode:
+    profiles: ["anass"]
+    image: rapid-hadoop:arm64
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    environment:
+      - JAVA_HOME=/usr/local/openjdk-11
+      - HADOOP_HOME=/opt/hadoop
+      - PATH=/opt/hadoop/bin:/opt/hadoop/sbin:/usr/local/openjdk-11/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - namenode_data:/data/namenode
+    networks:
+      - rapid-overlay
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["hdfs namenode"]
+    restart: unless-stopped
+
+  datanode:
+    profiles: ["anass"]
+    image: rapid-hadoop:arm64
+    container_name: datanode
+    hostname: datanode
+    ports:
+      - "9864:9864"
+    environment:
+      - JAVA_HOME=/usr/local/openjdk-11
+      - HADOOP_HOME=/opt/hadoop
+      - PATH=/opt/hadoop/bin:/opt/hadoop/sbin:/usr/local/openjdk-11/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - datanode_data:/data/datanode
+    networks:
+      - rapid-overlay
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["hdfs datanode"]
+    depends_on:
+      - namenode
+    restart: unless-stopped
+
+
+  flask-api:
+    profiles: ["anass"]
+    image: python:3.11-slim
+    container_name: flask-api
+    ports:
+      - "5000:5000"
+    environment:
+      - CASSANDRA_HOST=${CHAWI_IP}
+      - HBASE_HOST=${CHAWI_IP}
+      - KAFKA_HOST=${ANASS_IP}
+    volumes:
+      - ../bigdata-api:/app
+    working_dir: /app
+    command: bash -c "pip install flask cassandra-driver happybase -q && python app.py"
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  # ============================================================
+  # HAMZA — 100.72.34.26
+  # Services: spark-master, spark-worker
+  # ============================================================
+
+  spark-master:
+    profiles: ["hamza"]
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "8888:8888"
+    environment:
+      - SPARK_MODE=master
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=rapid2024
+      - HDFS_HOST=${ANASS_IP}
+      - KAFKA_HOST=${ANASS_IP}
+      - CASSANDRA_HOST=${CHAWI_IP}
+      - HBASE_HOST=${CHAWI_IP}
+    volumes:
+      - ../spark:/home/jovyan/work
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  spark-worker:
+    profiles: ["hamza"]
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=4G
+      - SPARK_WORKER_CORES=4
+      - HDFS_HOST=${ANASS_IP}
+      - KAFKA_HOST=${ANASS_IP}
+      - CASSANDRA_HOST=${CHAWI_IP}
+    depends_on:
+      - spark-master
+    volumes:
+      - ../spark:/home/jovyan/work
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  # ============================================================
+  # KHALID — 100.127.99.23
+  # Services: spark-streaming (1 container only)
+  # ============================================================
+
+  spark-streaming:
+    profiles: ["khalid"]
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-streaming
+    ports:
+      - "4040:4040"
+      - "8889:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=rapid2024
+      - KAFKA_HOST=${ANASS_IP}
+      - CASSANDRA_HOST=${CHAWI_IP}
+      - HDFS_HOST=${ANASS_IP}
+      - SPARK_DRIVER_MEMORY=2g
+      - SPARK_EXECUTOR_MEMORY=2g
+    volumes:
+      - ../spark:/home/jovyan/work
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  # ============================================================
+  # CHAWI — 100.97.208.110
+  # Services: cassandra, hbase, nginx-dashboard
+  # ============================================================
+
+  cassandra:
+    profiles: ["chawi"]
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=rapid-cluster
+      - CASSANDRA_DC=dc1
+      - HEAP_NEWSIZE=256M
+      - MAX_HEAP_SIZE=1G
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      retries: 10
+      start_period: 60s
+
+  hbase:
+    profiles: ["chawi"]
+    image: dajobe/hbase:latest
+    container_name: hbase
+    ports:
+      - "16000:16000"
+      - "16010:16010"
+      - "16020:16020"
+      - "16030:16030"
+    volumes:
+      - hbase_data:/data
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+
+  nginx-dashboard:
+    profiles: ["chawi"]
+    image: nginx:alpine
+    container_name: nginx-dashboard
+    ports:
+      - "3000:80"
+    volumes:
+      - ../dashboard:/usr/share/nginx/html:ro
+    networks:
+      - rapid-overlay
+    restart: unless-stopped
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615

@@ -192,4 +192,8 @@ save(
 )
 
 print("\n>>> Attack pattern detection complete!")
+<<<<<<< HEAD
 spark.stop()c
+=======
+spark.stop()
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615

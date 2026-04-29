@@ -1,3 +1,8 @@
+<<<<<<< HEAD
 ﻿# Force Linux line endings for shell scripts
 *.sh text eol=lf
+=======
+﻿# Force Linux line endings for shell scripts
+*.sh text eol=lf
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615
 *.env text eol=lf
