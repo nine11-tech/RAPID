@@ -12,7 +12,11 @@ spark.sparkContext.setLogLevel("WARN")
 # ─── Lecture depuis HDFS ──────────────────────────────────
 print(">>> Loading dataset from HDFS...")
 df = spark.read.csv(
+<<<<<<< HEAD
     "hdfs://namenode:9000/data/cybersecurity/logs/year=2024/month=10/day=15/cybersecurity_threat_detection_logs.csv",
+=======
+    "hdfs://namenode:9000/data/cybersecurity/logs/year=2024/month=01/cybersecurity_threat_detection_logs.csv",
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615
     header=True,
     inferSchema=True
 )
@@ -35,4 +39,8 @@ top10.write.mode("overwrite") \
     .parquet("hdfs://namenode:9000/data/cybersecurity/batch/top10_ips")
 
 print(">>> Results saved to HDFS: /data/cybersecurity/batch/top10_ips")
+<<<<<<< HEAD
 spark.stop()
+=======
+spark.stop()
+>>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615
