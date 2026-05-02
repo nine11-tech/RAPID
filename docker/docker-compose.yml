@@ -80,6 +80,7 @@ services:
     hostname: datanode
     ports:
       - "9864:9864"
+      - "9866:9866"
     environment:
       - JAVA_HOME=/usr/local/openjdk-11
       - HADOOP_HOME=/opt/hadoop
