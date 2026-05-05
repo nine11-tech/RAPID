@@ -27,6 +27,11 @@ _SUCCESS
 *.crc
 .part-*
 
+# ── Spark Streaming Checkpoints ─────────────────────────────
+chkpt_brute/
+chkpt_sig/
+chkpt_*/
+
 # ── Jupyter ─────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
@@ -52,18 +57,9 @@ desktop.ini
 # ── Docker ──────────────────────────────────────────────────
 docker/hadoop.env
 
-# ── Logs ────────────────────────────────────────────────────
+# ── Logs & Data ─────────────────────────────────────────────
 *.log
 logs/
-<<<<<<< HEAD
 *.csv
-=======
-*.csv
-data/raw/*.csv
-
-data/*.csv
-
 *.zip
-
 cybersecurity-threat-detection-logs.zip
->>>>>>> 98d72a3128403bc1ff2d323978deae66c2007615
