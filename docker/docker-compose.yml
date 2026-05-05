@@ -80,6 +80,7 @@ services:
     hostname: datanode
     ports:
       - "9864:9864"
+      - "9866:9866"
     environment:
       - JAVA_HOME=/usr/local/openjdk-11
       - HADOOP_HOME=/opt/hadoop
@@ -108,7 +109,7 @@ services:
     volumes:
       - ../bigdata-api:/app
     working_dir: /app
-    command: bash -c "pip install flask cassandra-driver happybase -q && python app.py"
+    command: bash -c "pip install -r /app/requirements.txt -q && python app.py"
     networks:
       - rapid-overlay
     restart: unless-stopped
