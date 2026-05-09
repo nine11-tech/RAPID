@@ -5,7 +5,7 @@ import happybase
 import os
 import urllib.request
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app, resources={r'/*': {'origins': '*'}})
@@ -47,32 +47,129 @@ def get_cassandra():
 def get_hbase():
     return happybase.Connection(HBASE_HOST, port=9090)
 
-def compute_adaptive_threshold(session):
+def event_score(row):
     """
-    Adaptive threshold based on current threat_scores table.
-    In our project, this approximates the recent active scoring window
-    produced by Spark Streaming.
+    Convert one log event into a normalized score from 0 to 100.
+    Used for adaptive threshold rolling 24h calculation.
     """
-    rows = session.execute("SELECT score FROM threat_scores")
-    scores = [r.score for r in rows if r.score is not None]
+    score = 0
+
+    label = (getattr(row, "threat_label", "") or "").lower()
+    action = (getattr(row, "action", "") or "").lower()
+    user_agent = (getattr(row, "user_agent", "") or "").lower()
+    request_path = (getattr(row, "request_path", "") or "").lower()
+
+    bytes_transferred = getattr(row, "bytes_transferred", 0) or 0
+
+    # Base score from label
+    if label == "malicious":
+        score += 80
+    elif label == "suspicious":
+        score += 45
+    elif label == "benign":
+        score += 5
+    else:
+        score += 10
+
+    # Blocked traffic is usually more suspicious
+    if action == "blocked":
+        score += 8
+
+    # Signature-like indicators
+    if "sqlmap" in user_agent or "union select" in request_path:
+        score += 20
+
+    if "nmap" in user_agent or "scan" in user_agent:
+        score += 15
+
+    if "../" in request_path or "..\\" in request_path or "passwd" in request_path:
+        score += 20
+
+    if "wp-login" in request_path or "hydra" in user_agent or "brute" in user_agent:
+        score += 15
+
+    if "<script" in request_path or "xss" in request_path:
+        score += 20
+
+    # Volume contribution, capped
+    try:
+        score += min(float(bytes_transferred) / 10000.0, 10)
+    except Exception:
+        pass
+
+    return min(round(score, 2), 100)
+
+
+def compute_adaptive_threshold(session, window_hours=24, multiplier=1.5):
+    """
+    Bonus Sprint:
+    Ajustement dynamique des seuils de détection.
+
+    - Moyenne glissante 24h
+    - Recalcul automatique à chaque appel API
+    - Source: logs Cassandra
+    - Aucun nouveau conteneur
+    """
+    rows = list(session.execute(
+        "SELECT timestamp, threat_label, action, bytes_transferred, request_path, user_agent "
+        "FROM logs LIMIT 20000"
+    ))
+
+    valid_rows = [r for r in rows if getattr(r, "timestamp", None) is not None]
+
+    if not valid_rows:
+        return {
+            "threshold": 50,
+            "avg_score_24h": 0,
+            "samples_used": 0,
+            "events_scanned": 0,
+            "window_hours": window_hours,
+            "formula": "fallback_default_no_timestamp_data",
+            "mode": "rolling_24h"
+        }
+
+    # Dataset/replay mode:
+    # use latest log timestamp as reference instead of real current time.
+    reference_time = max(r.timestamp for r in valid_rows)
+    window_start = reference_time - timedelta(hours=window_hours)
+
+    window_rows = [
+        r for r in valid_rows
+        if window_start <= r.timestamp <= reference_time
+    ]
+
+    scores = [event_score(r) for r in window_rows]
 
     if not scores:
         return {
             "threshold": 50,
-            "avg_score": 0,
-            "total_ips": 0,
-            "formula": "default"
+            "avg_score_24h": 0,
+            "samples_used": 0,
+            "events_scanned": len(valid_rows),
+            "window_hours": window_hours,
+            "reference_time": reference_time.isoformat(),
+            "window_start": window_start.isoformat(),
+            "formula": "fallback_default_empty_24h_window",
+            "mode": "rolling_24h"
         }
 
     avg = sum(scores) / len(scores)
-    threshold = min(avg * 1.5, 100)
+    threshold = min(avg * multiplier, 100)
 
     return {
         "threshold": round(threshold, 2),
-        "avg_score": round(avg, 2),
-        "total_ips": len(scores),
-        "formula": "avg_score * 1.5 capped at 100"
+        "avg_score_24h": round(avg, 2),
+        "samples_used": len(scores),
+        "events_scanned": len(valid_rows),
+        "window_hours": window_hours,
+        "reference_time": reference_time.isoformat(),
+        "window_start": window_start.isoformat(),
+        "multiplier": multiplier,
+        "formula": "threshold = min(avg_score_24h * 1.5, 100)",
+        "mode": "rolling_24h",
+        "recalculation": "automatic_on_each_api_call"
     }
+
 
 @app.route("/health")
 def health():
