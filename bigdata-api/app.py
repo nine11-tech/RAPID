@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from cassandra.cluster import Cluster
 import happybase
@@ -46,6 +46,47 @@ def get_cassandra():
 
 def get_hbase():
     return happybase.Connection(HBASE_HOST, port=9090)
+
+def to_json_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (list, tuple, set)):
+        return [to_json_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): to_json_value(v) for k, v in value.items()}
+    return str(value)
+
+def parse_datetime_value(value):
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text).replace(tzinfo=None)
+        except ValueError:
+            pass
+
+        for fmt, length in (
+            ("%Y-%m-%d %H:%M:%S", 19),
+            ("%Y-%m-%dT%H:%M:%S", 19),
+            ("%Y-%m-%d", 10),
+        ):
+            try:
+                return datetime.strptime(text[:length], fmt)
+            except ValueError:
+                pass
+    return None
+
+def get_int_arg(name, default, minimum, maximum):
+    try:
+        value = int(request.args.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
 
 def event_score(row):
     """
@@ -115,7 +156,12 @@ def compute_adaptive_threshold(session, window_hours=24, multiplier=1.5):
         "FROM logs LIMIT 20000"
     ))
 
-    valid_rows = [r for r in rows if getattr(r, "timestamp", None) is not None]
+    valid_rows = [
+        (r, parsed_timestamp)
+        for r in rows
+        for parsed_timestamp in [parse_datetime_value(getattr(r, "timestamp", None))]
+        if parsed_timestamp is not None
+    ]
 
     if not valid_rows:
         return {
@@ -130,12 +176,12 @@ def compute_adaptive_threshold(session, window_hours=24, multiplier=1.5):
 
     # Dataset/replay mode:
     # use latest log timestamp as reference instead of real current time.
-    reference_time = max(r.timestamp for r in valid_rows)
+    reference_time = max(parsed_timestamp for _, parsed_timestamp in valid_rows)
     window_start = reference_time - timedelta(hours=window_hours)
 
     window_rows = [
-        r for r in valid_rows
-        if window_start <= r.timestamp <= reference_time
+        r for r, parsed_timestamp in valid_rows
+        if window_start <= parsed_timestamp <= reference_time
     ]
 
     scores = [event_score(r) for r in window_rows]
@@ -196,7 +242,7 @@ def get_threat_by_ip(ip):
     }
 
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
 
         rows = list(session.execute(
             "SELECT * FROM realtime_threats WHERE ip_source=%s",
@@ -223,7 +269,7 @@ def get_threat_by_ip(ip):
                 "total_events": r.total_events,
                 "malicious_count": r.malicious_count,
                 "suspicious_count": r.suspicious_count,
-                "last_seen": r.last_seen
+                "last_seen": to_json_value(r.last_seen)
             }
 
         rows = list(session.execute(
@@ -243,14 +289,12 @@ def get_threat_by_ip(ip):
             [ip]
         ))
         result["volume_alerts"] = [{
-            "window_start": r.window_start,
-            "window_end": r.window_end,
+            "window_start": to_json_value(r.window_start),
+            "window_end": to_json_value(r.window_end),
             "total_bytes": r.total_bytes,
             "threshold": r.threshold,
             "reason": r.reason
         } for r in rows]
-
-        cluster.shutdown()
 
     except Exception as e:
         result["cassandra_error"] = str(e)
@@ -311,9 +355,8 @@ def get_threat_by_ip(ip):
     result["final_score"] = raw_score
 
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         threshold_info = compute_adaptive_threshold(session)
-        cluster.shutdown()
     except Exception as e:
         threshold_info = {
             "threshold": 50,
@@ -336,12 +379,12 @@ def get_threat_by_ip(ip):
         result["threat_level"] = "LOW"
         result["recommendation"] = "ALLOW"
 
-    return jsonify(result)
+    return jsonify(to_json_value(result))
 
 @app.route("/threats/top10")
 def get_top10():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         rows = session.execute(
             "SELECT source_ip, score, malicious_count, suspicious_count, total_events, last_seen FROM threat_scores"
         )
@@ -354,12 +397,11 @@ def get_top10():
                 "malicious_count": r.malicious_count,
                 "suspicious_count": r.suspicious_count,
                 "total_events": r.total_events,
-                "last_seen": r.last_seen
+                "last_seen": to_json_value(r.last_seen)
             })
 
-        cluster.shutdown()
         data = sorted(data, key=lambda x: x["score"] or 0, reverse=True)[:10]
-        return jsonify({"top10": data, "count": len(data)})
+        return jsonify(to_json_value({"top10": data, "count": len(data)}))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -367,12 +409,11 @@ def get_top10():
 @app.route("/threats/threshold")
 def get_threshold():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         data = compute_adaptive_threshold(session)
-        cluster.shutdown()
 
         data["computed_at"] = datetime.utcnow().isoformat()
-        return jsonify(data)
+        return jsonify(to_json_value(data))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -380,7 +421,7 @@ def get_threshold():
 @app.route("/threats/recent")
 def get_recent():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         rows = session.execute(
             "SELECT source_ip, timestamp, reason, request_path, user_agent, threat_label FROM signature_alerts LIMIT 10"
         )
@@ -394,8 +435,7 @@ def get_recent():
             "threat_label": r.threat_label
         } for r in rows]
 
-        cluster.shutdown()
-        return jsonify({"recent": data})
+        return jsonify(to_json_value({"recent": data}))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -403,22 +443,21 @@ def get_recent():
 @app.route("/threats/volume-alerts")
 def get_volume_alerts():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         rows = session.execute(
             "SELECT source_ip, window_start, window_end, total_bytes, threshold, reason FROM volume_alerts LIMIT 20"
         )
 
         data = [{
             "ip": r.source_ip,
-            "window_start": r.window_start,
-            "window_end": r.window_end,
+            "window_start": to_json_value(r.window_start),
+            "window_end": to_json_value(r.window_end),
             "total_bytes": r.total_bytes,
             "threshold": r.threshold,
             "reason": r.reason
         } for r in rows]
 
-        cluster.shutdown()
-        return jsonify({"volume_alerts": data})
+        return jsonify(to_json_value({"volume_alerts": data}))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -426,7 +465,7 @@ def get_volume_alerts():
 @app.route("/threats/by-protocol")
 def get_by_protocol():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         rows = session.execute(
             "SELECT protocol, threat_label FROM logs LIMIT 5000"
         )
@@ -448,7 +487,6 @@ def get_by_protocol():
             elif r.threat_label == "suspicious":
                 by_protocol[protocol]["suspicious"] += 1
 
-        cluster.shutdown()
         return jsonify({"by_protocol": by_protocol})
 
     except Exception as e:
@@ -457,7 +495,7 @@ def get_by_protocol():
 @app.route("/threats/timeline")
 def get_timeline():
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
         rows = session.execute(
             "SELECT timestamp, threat_label FROM logs LIMIT 5000"
         )
@@ -484,7 +522,6 @@ def get_timeline():
             elif r.threat_label == "suspicious":
                 by_day[day]["suspicious"] += 1
 
-        cluster.shutdown()
         timeline = sorted(by_day.values(), key=lambda x: x["date"])
         return jsonify({"timeline": timeline, "days": len(timeline)})
 
@@ -542,6 +579,63 @@ def severity_from_score(score, threat_label=None):
         return "MEDIUM", "yellow"
 
     return "LOW", "cyan"
+
+
+
+def geo_event_score(row, attack_type):
+    """
+    Event-level score for geomap.
+    This score represents the displayed attack row, not the global IP score.
+    """
+    label = (getattr(row, "threat_label", "") or "").lower()
+    action = (getattr(row, "action", "") or "").lower()
+    user_agent = (getattr(row, "user_agent", "") or "").lower()
+    request_path = (getattr(row, "request_path", "") or "").lower()
+    bytes_transferred = getattr(row, "bytes_transferred", 0) or 0
+
+    score = 0
+
+    # Main attack-type weight
+    if attack_type == "SQLi":
+        score += 70
+    elif attack_type == "XSS":
+        score += 75
+    elif attack_type == "PathTraversal":
+        score += 75
+    elif attack_type == "BruteForce":
+        score += 45
+    elif attack_type == "ToolScan":
+        score += 45
+    else:
+        score += 10
+
+    # Dataset label correction
+    if label == "malicious":
+        score += 15
+    elif label == "suspicious":
+        score += 10
+
+    # Action correction
+    if action == "blocked":
+        score += 5
+
+    # Extra signature correction
+    if "sqlmap" in user_agent:
+        score += 10
+    if "nmap" in user_agent or "masscan" in user_agent:
+        score += 5
+    if "passwd" in request_path or "../" in request_path or "..\\" in request_path:
+        score += 10
+    if "phpmyadmin" in request_path or "backup.sql" in request_path:
+        score += 5
+
+    # Small volume correction, capped
+    try:
+        score += min(float(bytes_transferred) / 20000.0, 5)
+    except Exception:
+        pass
+
+    return min(round(score, 2), 100)
 
 
 def load_geo_cache():
@@ -631,7 +725,7 @@ def get_geo_attacks():
     No private IP is mapped to Morocco or RAPID infrastructure.
     """
     try:
-        session, cluster = get_cassandra()
+        session, _cluster = get_cassandra()
 
         score_rows = session.execute(
             "SELECT source_ip, score, malicious_count, suspicious_count, total_events, last_seen FROM threat_scores"
@@ -644,11 +738,11 @@ def get_geo_attacks():
                 "malicious_count": r.malicious_count or 0,
                 "suspicious_count": r.suspicious_count or 0,
                 "total_events": r.total_events or 0,
-                "last_seen": r.last_seen
+                "last_seen": to_json_value(r.last_seen)
             }
 
         rows = session.execute(
-            "SELECT source_ip, dest_ip, timestamp, protocol, threat_label, request_path, user_agent FROM logs LIMIT 500"
+            "SELECT source_ip, dest_ip, timestamp, protocol, action, threat_label, bytes_transferred, request_path, user_agent FROM logs LIMIT 500"
         )
 
         candidates = []
@@ -717,9 +811,14 @@ def get_geo_attacks():
 
             target = get_target_from_dest(r.dest_ip or "192.168.1.1")
             score_info = score_map.get(src, {})
-            score = score_info.get("score", 0)
-            severity, color = severity_from_score(score, r.threat_label)
+            ip_score = score_info.get("score", 0)
+
             attack_type = infer_attack_type(r)
+            event_score_value = geo_event_score(r, attack_type)
+
+            # Geomap score must represent this specific event, not the global IP score
+            score = event_score_value
+            severity, color = severity_from_score(score, r.threat_label)
 
             attacks.append({
                 "source_ip": src,
@@ -746,10 +845,13 @@ def get_geo_attacks():
                 "severity": severity,
                 "color": color,
                 "score": score,
+                "event_score": event_score_value,
+                "ip_score": ip_score,
+                "score_source": "event_level",
                 "malicious_count": score_info.get("malicious_count", 0),
                 "suspicious_count": score_info.get("suspicious_count", 0),
                 "total_events": score_info.get("total_events", 0),
-                "timestamp": str(r.timestamp),
+                "timestamp": to_json_value(r.timestamp),
                 "request_path": r.request_path,
                 "user_agent": r.user_agent,
 
@@ -762,8 +864,6 @@ def get_geo_attacks():
                 }
             })
 
-        cluster.shutdown()
-
         attacks = sorted(attacks, key=lambda x: x["score"], reverse=True)[:80]
 
         countries = {}
@@ -771,7 +871,7 @@ def get_geo_attacks():
             c = a.get("source_country") or "Unknown"
             countries[c] = countries.get(c, 0) + 1
 
-        return jsonify({
+        return jsonify(to_json_value({
             "status": "ok",
             "mode": "real_public_ip_to_public_ip_geo",
             "count": len(attacks),
@@ -784,10 +884,570 @@ def get_geo_attacks():
             },
             "geo_error": geo.get("_geo_error"),
             "note": "Only public source_ip and public dest_ip rows are included. Private IPs are discarded and are not mapped to RAPID infrastructure."
-        })
+        }))
 
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
+
+
+
+# ════════════════════════════════════════════════════════════
+# HBase endpoint: Khalid ML / Port scan detections
+# Table: port_scans
+# ════════════════════════════════════════════════════════════
+
+def hbase_decode_value(v):
+    if isinstance(v, bytes):
+        return v.decode(errors="ignore")
+    return str(v)
+
+
+def to_int_safe(v, default=0):
+    try:
+        return int(float(v))
+    except Exception:
+        return default
+
+
+def decode_port_scan_row(row_key, data):
+    row_key = hbase_decode_value(row_key)
+
+    source_ip = hbase_decode_value(data.get(b"cf:source_ip", b""))
+    distinct_ports = to_int_safe(hbase_decode_value(data.get(b"cf:distinct_ports", b"0")))
+    total_connections = to_int_safe(hbase_decode_value(data.get(b"cf:total_connections", b"0")))
+    window_start = hbase_decode_value(data.get(b"cf:window_start", b""))
+    window_end = hbase_decode_value(data.get(b"cf:window_end", b""))
+
+    if distinct_ports >= 25 or total_connections >= 30:
+        severity = "HIGH"
+        recommendation = "BLOCK"
+    elif distinct_ports >= 20 or total_connections >= 20:
+        severity = "MEDIUM"
+        recommendation = "MONITOR"
+    else:
+        severity = "LOW"
+        recommendation = "ALLOW"
+
+    return {
+        "row_key": row_key,
+        "source_ip": source_ip,
+        "distinct_ports": distinct_ports,
+        "total_connections": total_connections,
+        "window_start": window_start,
+        "window_end": window_end,
+        "severity": severity,
+        "recommendation": recommendation
+    }
+
+
+@app.route("/threats/port-scans")
+def get_port_scans():
+    """
+    Return port scan detections written by Khalid into HBase.
+    Query params:
+      ?limit=50
+    """
+    try:
+        limit = get_int_arg("limit", 50, 1, 500)
+
+        conn = get_hbase()
+        table = conn.table("port_scans")
+
+        rows = []
+        for key, data in table.scan(limit=limit):
+            rows.append(decode_port_scan_row(key, data))
+
+        conn.close()
+
+        rows = sorted(
+            rows,
+            key=lambda x: (x["distinct_ports"], x["total_connections"]),
+            reverse=True
+        )
+
+        return jsonify({
+            "status": "ok",
+            "source": "hbase",
+            "table": "port_scans",
+            "count": len(rows),
+            "limit": limit,
+            "port_scans": rows
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "source": "hbase",
+            "table": "port_scans",
+            "error": str(e)
+        }), 500
+
+
+@app.route("/threats/port-scans/top")
+def get_top_port_scans():
+    """
+    Return top port scan detections sorted by distinct_ports and total_connections.
+    Query params:
+      ?limit=10
+      ?scan_limit=500
+    """
+    try:
+        limit = get_int_arg("limit", 10, 1, 100)
+        scan_limit = get_int_arg("scan_limit", 500, 1, 2000)
+
+        conn = get_hbase()
+        table = conn.table("port_scans")
+
+        rows = []
+        for key, data in table.scan(limit=scan_limit):
+            rows.append(decode_port_scan_row(key, data))
+
+        conn.close()
+
+        rows = sorted(
+            rows,
+            key=lambda x: (x["distinct_ports"], x["total_connections"]),
+            reverse=True
+        )[:limit]
+
+        return jsonify({
+            "status": "ok",
+            "source": "hbase",
+            "table": "port_scans",
+            "count": len(rows),
+            "limit": limit,
+            "scan_limit": scan_limit,
+            "top_port_scans": rows
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "source": "hbase",
+            "table": "port_scans",
+            "error": str(e)
+        }), 500
+
+
+@app.route("/threats/port-scans/ip/<ip>")
+def get_port_scans_by_ip(ip):
+    """
+    Return port scan detections for one source IP.
+    Query params:
+      ?limit=1000
+    """
+    try:
+        limit = get_int_arg("limit", 1000, 1, 5000)
+
+        conn = get_hbase()
+        table = conn.table("port_scans")
+
+        matches = []
+        scanned = 0
+
+        for key, data in table.scan(limit=limit):
+            scanned += 1
+            row = decode_port_scan_row(key, data)
+
+            if row["source_ip"] == ip or row["row_key"].startswith(ip + "|"):
+                matches.append(row)
+
+        conn.close()
+
+        matches = sorted(
+            matches,
+            key=lambda x: x["window_start"],
+            reverse=True
+        )
+
+        return jsonify({
+            "status": "ok",
+            "source": "hbase",
+            "table": "port_scans",
+            "ip": ip,
+            "scanned": scanned,
+            "count": len(matches),
+            "port_scans": matches
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "source": "hbase",
+            "table": "port_scans",
+            "ip": ip,
+            "error": str(e)
+        }), 500
+
+
+
+# ════════════════════════════════════════════════════════════
+# Batch Layer HBase Endpoints
+# Pure HBase endpoints for Chawi dashboard
+# No Cassandra streaming tables used here
+# ════════════════════════════════════════════════════════════
+
+BATCH_HBASE_TABLES = {
+    "attack_patterns": {
+        "endpoint": "/batch/attack-patterns",
+        "list_key": "attack_patterns",
+        "sort_fields": ["occurrences", "total_bytes"]
+    },
+    "ip_reputation": {
+        "endpoint": "/batch/ip-reputation",
+        "list_key": "ip_reputation",
+        "sort_fields": ["reputation_score", "threat_count"]
+    },
+    "multistep_attacks": {
+        "endpoint": "/batch/multistep-attacks",
+        "list_key": "multistep_attacks",
+        "sort_fields": ["malicious_count", "total_events"]
+    },
+    "port_scans": {
+        "endpoint": "/batch/port-scans",
+        "list_key": "port_scans",
+        "sort_fields": ["distinct_ports", "total_connections"]
+    },
+    "threat_timeline": {
+        "endpoint": "/batch/threat-timeline",
+        "list_key": "threat_timeline",
+        "sort_fields": []
+    },
+    "threat_volume": {
+        "endpoint": "/batch/threat-volume",
+        "list_key": "threat_volume",
+        "sort_fields": ["total_bytes", "threshold"]
+    },
+}
+
+
+def batch_hbase_decode(value):
+    if value is None:
+        return None
+
+    if isinstance(value, bytes):
+        text = value.decode(errors="ignore")
+    else:
+        text = str(value)
+
+    text = text.strip()
+
+    # Try numeric conversion for dashboard charts
+    try:
+        if text != "" and all(c not in text for c in ["-", ":", " "]):
+            if "." in text:
+                return float(text)
+            return int(text)
+    except Exception:
+        pass
+
+    # Try list conversion for strings like ['SQLi', 'ToolScan']
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            import ast
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, (list, tuple)):
+                return list(parsed)
+        except Exception:
+            pass
+
+    return text
+
+
+def batch_hbase_number(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def batch_hbase_normalize_row(row_key, data):
+    row_key = batch_hbase_decode(row_key)
+
+    row = {
+        "row_key": row_key,
+        "columns": {}
+    }
+
+    for col, val in data.items():
+        col_name = batch_hbase_decode(col)
+        value = batch_hbase_decode(val)
+
+        row["columns"][col_name] = value
+
+        # Convert cf:source_ip -> source_ip
+        clean_name = col_name.split(":", 1)[1] if ":" in col_name else col_name
+        row[clean_name] = value
+
+    return row
+
+
+def batch_hbase_scan_table(table_name, limit=50):
+    if table_name not in BATCH_HBASE_TABLES:
+        raise ValueError(f"Unsupported batch HBase table: {table_name}")
+
+    limit = max(1, min(int(limit), 5000))
+
+    conn = get_hbase()
+    conn.open()
+
+    table = conn.table(table_name)
+    rows = [batch_hbase_normalize_row(k, d) for k, d in table.scan(limit=limit)]
+
+    conn.close()
+
+    sort_fields = BATCH_HBASE_TABLES[table_name].get("sort_fields", [])
+    if sort_fields:
+        rows = sorted(
+            rows,
+            key=lambda r: tuple(batch_hbase_number(r.get(f)) for f in sort_fields),
+            reverse=True
+        )
+
+    return rows
+
+
+def batch_hbase_get_row(table_name, row_key):
+    if table_name not in BATCH_HBASE_TABLES:
+        raise ValueError(f"Unsupported batch HBase table: {table_name}")
+
+    conn = get_hbase()
+    conn.open()
+
+    table = conn.table(table_name)
+    data = table.row(row_key.encode())
+
+    conn.close()
+
+    if not data:
+        return None
+
+    return batch_hbase_normalize_row(row_key, data)
+
+
+def batch_hbase_response(table_name):
+    try:
+        limit = get_int_arg("limit", 50, 1, 5000)
+
+        rows = batch_hbase_scan_table(table_name, limit)
+        config = BATCH_HBASE_TABLES[table_name]
+        list_key = config["list_key"]
+
+        return jsonify({
+            "status": "ok",
+            "layer": "batch",
+            "source": "hbase",
+            "hbase_host": HBASE_HOST,
+            "hbase_port": 9090,
+            "table": table_name,
+            "count": len(rows),
+            "limit": limit,
+            list_key: rows
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "table": table_name,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/hbase/tables")
+def batch_hbase_tables():
+    try:
+        conn = get_hbase()
+        conn.open()
+
+        existing = [
+            t.decode(errors="ignore") if isinstance(t, bytes) else str(t)
+            for t in conn.tables()
+        ]
+
+        conn.close()
+
+        tables = []
+        for table_name, config in BATCH_HBASE_TABLES.items():
+            tables.append({
+                "table": table_name,
+                "endpoint": config["endpoint"],
+                "list_key": config["list_key"],
+                "exists": table_name in existing
+            })
+
+        return jsonify({
+            "status": "ok",
+            "layer": "batch",
+            "source": "hbase",
+            "hbase_host": HBASE_HOST,
+            "hbase_port": 9090,
+            "tables": tables
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/hbase/<table_name>")
+def batch_hbase_generic(table_name):
+    return batch_hbase_response(table_name)
+
+
+@app.route("/batch/hbase/<table_name>/row")
+def batch_hbase_generic_row(table_name):
+    try:
+        row_key = request.args.get("key", "")
+        if not row_key:
+            return jsonify({
+                "status": "error",
+                "error": "Missing query parameter: key"
+            }), 400
+
+        row = batch_hbase_get_row(table_name, row_key)
+
+        return jsonify({
+            "status": "ok" if row else "not_found",
+            "layer": "batch",
+            "source": "hbase",
+            "table": table_name,
+            "row_key": row_key,
+            "row": row
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "table": table_name,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/attack-patterns")
+def batch_attack_patterns():
+    return batch_hbase_response("attack_patterns")
+
+
+@app.route("/batch/ip-reputation")
+def batch_ip_reputation():
+    return batch_hbase_response("ip_reputation")
+
+
+@app.route("/batch/ip-reputation/<ip>")
+def batch_ip_reputation_by_ip(ip):
+    try:
+        row = batch_hbase_get_row("ip_reputation", ip)
+
+        return jsonify({
+            "status": "ok" if row else "not_found",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "ip_reputation",
+            "ip": ip,
+            "reputation": row
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "ip_reputation",
+            "ip": ip,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/multistep-attacks")
+def batch_multistep_attacks():
+    return batch_hbase_response("multistep_attacks")
+
+
+@app.route("/batch/multistep-attacks/ip/<ip>")
+def batch_multistep_attacks_by_ip(ip):
+    try:
+        row = batch_hbase_get_row("multistep_attacks", ip)
+
+        return jsonify({
+            "status": "ok" if row else "not_found",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "multistep_attacks",
+            "ip": ip,
+            "multistep_attack": row
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "multistep_attacks",
+            "ip": ip,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/port-scans")
+def batch_port_scans():
+    return batch_hbase_response("port_scans")
+
+
+@app.route("/batch/port-scans/top")
+def batch_port_scans_top():
+    return batch_hbase_response("port_scans")
+
+
+@app.route("/batch/port-scans/ip/<ip>")
+def batch_port_scans_by_ip(ip):
+    try:
+        limit = get_int_arg("limit", 1000, 1, 5000)
+        rows = batch_hbase_scan_table("port_scans", limit)
+
+        matches = [
+            r for r in rows
+            if str(r.get("source_ip", "")) == ip
+            or str(r.get("row_key", "")).startswith(ip + "|")
+        ]
+
+        return jsonify({
+            "status": "ok",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "port_scans",
+            "ip": ip,
+            "count": len(matches),
+            "scanned": len(rows),
+            "port_scans": matches
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "layer": "batch",
+            "source": "hbase",
+            "table": "port_scans",
+            "ip": ip,
+            "error": str(e)
+        }), 500
+
+
+@app.route("/batch/threat-timeline")
+def batch_threat_timeline():
+    return batch_hbase_response("threat_timeline")
+
+
+@app.route("/batch/threat-volume")
+def batch_threat_volume():
+    return batch_hbase_response("threat_volume")
 
 
 if __name__ == "__main__":
