@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAPID — Batch HBase Intelligence</title>
+  <link rel="stylesheet" href="batch.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- Scanline overlay -->
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <!-- Noise grain overlay -->
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- Top header bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-mark">
+        <span class="logo-bracket">[</span>
+        <span class="logo-text">RAPID</span>
+        <span class="logo-bracket">]</span>
+        <span class="logo-badge">BATCH</span>
+      </div>
+      <div class="logo-sub">HBase Batch Intelligence Layer · Historical Analysis</div>
+      <div class="nav-links" style="margin-left: 2rem; display: inline-block;">
+        <a href="dashboard.html" class="btn btn-primary" style="background: rgba(0, 229, 255, 0.1); color: #00e5ff; border-color: #00e5ff; text-decoration: none; padding: 4px 10px; border-radius: 4px;">
+          <span class="nav-icon">⚡</span>
+          Real-time
+        </a>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="patterns">Attack Patterns</button>
+        <button class="tab-btn" data-tab="reputation">IP Reputation</button>
+        <button class="tab-btn" data-tab="portscans">Port Scans</button>
+        <button class="tab-btn" data-tab="multistep">Multi-Step</button>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <div class="status-group">
+        <span class="dot" id="dot-api"></span>
+        <span class="status-label" id="status-api">Connecting…</span>
+      </div>
+      <div class="hbase-badge">
+        <span class="hbase-icon">⬡</span>
+        HBase
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="refresh-badge">
+        <span>↻</span>
+        <span id="poll-interval">30s</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Error banner -->
+  <div class="error-banner" id="error-banner" hidden>
+    <span class="err-icon">⚠</span>
+    <span id="error-msg">API unreachable — retrying…</span>
+    <button onclick="document.getElementById('error-banner').hidden=true">✕</button>
+  </div>
+
+  <!-- Controls Bar -->
+  <section class="controls-bar">
+    <div class="search-group">
+      <input type="text" id="ip-search" placeholder="Search IP in HBase…" class="search-input">
+      <button onclick="searchBatchIP()" class="btn btn-primary">Query HBase</button>
+      <button onclick="clearSearch()" class="btn btn-ghost">Clear</button>
+    </div>
+    <div class="hbase-tables-group" id="hbase-tables-group">
+      <span class="tables-label">Tables:</span>
+      <div id="tables-list" class="tables-list">
+        <span class="table-tag loading">Loading…</span>
+      </div>
+    </div>
+    <div class="controls-group">
+      <button id="pause-btn" onclick="togglePolling()" class="btn btn-icon" title="Pause/Resume">
+        <span id="pause-icon">⏸</span>
+      </button>
+      <button onclick="refreshNow()" class="btn btn-icon" title="Refresh Now">↻</button>
+      <button onclick="exportBatchData()" class="btn btn-icon" title="Export Data">⬇</button>
+    </div>
+  </section>
+
+  <!-- IP Detail Modal -->
+  <div id="ip-modal" class="modal" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⬡</span>
+          <h3 id="modal-ip">HBase IP Details</h3>
+        </div>
+        <button onclick="closeModal()" class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">Reputation Score</div>
+            <div id="modal-rep-score" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Total Attacks</div>
+            <div id="modal-total-attacks" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Risk Level</div>
+            <div id="modal-risk-level" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Port Scans</div>
+            <div id="modal-port-scans" class="detail-value">—</div>
+          </div>
+        </div>
+        <div id="modal-multistep" class="modal-section">
+          <div class="section-label">Multi-Step Attack Chains</div>
+          <div id="modal-multistep-body" class="modal-list"></div>
+        </div>
+        <div id="modal-ports" class="modal-section">
+          <div class="section-label">Port Scan History</div>
+          <div id="modal-ports-body" class="modal-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI strip -->
+  <section class="kpi-strip container">
+    <div class="kpi-card" id="kpi-patterns">
+      <div class="kpi-icon">◈</div>
+      <div class="kpi-value" id="kpi-patterns-val">—</div>
+      <div class="kpi-label">Attack Patterns</div>
+    </div>
+    <div class="kpi-card kpi-accent" id="kpi-reputation">
+      <div class="kpi-icon">⬡</div>
+      <div class="kpi-value" id="kpi-reputation-val">—</div>
+      <div class="kpi-label">Flagged IPs</div>
+    </div>
+    <div class="kpi-card kpi-warn" id="kpi-portscans">
+      <div class="kpi-icon">⊡</div>
+      <div class="kpi-value" id="kpi-portscans-val">—</div>
+      <div class="kpi-label">Port Scan Events</div>
+    </div>
+    <div class="kpi-card kpi-danger" id="kpi-multistep">
+      <div class="kpi-icon">⋯</div>
+      <div class="kpi-value" id="kpi-multistep-val">—</div>
+      <div class="kpi-label">Multi-Step Attacks</div>
+    </div>
+    <div class="kpi-card" id="kpi-volume">
+      <div class="kpi-icon">▲</div>
+      <div class="kpi-value" id="kpi-volume-val">—</div>
+      <div class="kpi-label">Threat Volume</div>
+    </div>
+    <div class="kpi-card" id="kpi-tables">
+      <div class="kpi-icon">⬡</div>
+      <div class="kpi-value" id="kpi-tables-val">—</div>
+      <div class="kpi-label">HBase Tables</div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB: OVERVIEW                                          -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <main class="grid container" id="tab-overview">
+
+    <!-- Threat Timeline -->
+    <section class="card card-wide">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">◈</span>
+          Batch Threat Timeline
+        </div>
+        <div class="card-meta" id="timeline-meta">—</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartTimeline"></canvas>
+      </div>
+    </section>
+
+    <!-- Threat Volume -->
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">◈</span>
+          Threat Volume
+        </div>
+        <div class="card-meta" id="volume-meta">—</div>
+      </div>
+      <div class="chart-wrap chart-small">
+        <canvas id="chartVolume"></canvas>
+      </div>
+    </section>
+
+    <!-- Attack Pattern Distribution -->
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">◈</span>
+          Attack Pattern Types
+        </div>
+        <div class="card-meta" id="patterns-chart-meta">—</div>
+      </div>
+      <div class="chart-wrap chart-small">
+        <canvas id="chartPatterns"></canvas>
+      </div>
+    </section>
+
+    <!-- Top Port Scans -->
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⊡</span>
+          Top Port Scan Sources
+        </div>
+        <div class="card-meta" id="top-ports-meta">—</div>
+      </div>
+      <div class="table-wrap table-compact">
+        <table class="batch-table">
+          <thead>
+            <tr><th>#</th><th>IP</th><th>Ports Scanned</th><th>Score</th></tr>
+          </thead>
+          <tbody id="top-ports-body">
+            <tr><td colspan="4" class="table-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- IP Reputation Top -->
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⬡</span>
+          IP Reputation Ranking
+        </div>
+        <div class="card-meta" id="rep-meta">—</div>
+      </div>
+      <div class="table-wrap table-compact">
+        <table class="batch-table">
+          <thead>
+            <tr><th>#</th><th>IP</th><th>Score</th><th>Risk</th></tr>
+          </thead>
+          <tbody id="reputation-body">
+            <tr><td colspan="4" class="table-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB: ATTACK PATTERNS                                   -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <main class="grid container hidden" id="tab-patterns">
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">◈</span>
+          Batch Attack Patterns
+        </div>
+        <div class="card-meta" id="patterns-full-meta">—</div>
+      </div>
+      <div class="table-wrap">
+        <table class="batch-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Source IP</th>
+              <th>Pattern Type</th>
+              <th>Count</th>
+              <th>Score</th>
+              <th>Severity</th>
+              <th>Last Seen</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="patterns-table-body">
+            <tr><td colspan="8" class="table-empty">Waiting for data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB: IP REPUTATION                                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <main class="grid container hidden" id="tab-reputation">
+
+    <section class="card card-wide">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⬡</span>
+          IP Reputation Scores — HBase
+        </div>
+        <div class="card-meta" id="rep-chart-meta">—</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartReputation"></canvas>
+      </div>
+    </section>
+
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⬡</span>
+          Full Reputation Table
+        </div>
+        <div class="card-meta" id="rep-table-meta">—</div>
+      </div>
+      <div class="table-wrap">
+        <table class="batch-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>IP Address</th>
+              <th>Reputation Score</th>
+              <th>Attack Count</th>
+              <th>Risk Level</th>
+              <th>Last Activity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="rep-table-body">
+            <tr><td colspan="7" class="table-empty">Waiting for data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB: PORT SCANS                                        -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <main class="grid container hidden" id="tab-portscans">
+
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⊡</span>
+          Top Port Scan IPs
+        </div>
+        <div class="card-meta" id="top-portscan-meta">—</div>
+      </div>
+      <div class="chart-wrap chart-small">
+        <canvas id="chartPortTop"></canvas>
+      </div>
+    </section>
+
+    <section class="card card-half">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⊡</span>
+          Port Scan Activity
+        </div>
+        <div class="card-meta" id="portscans-list-meta">—</div>
+      </div>
+      <div class="alerts-feed" id="portscans-feed">
+        <div class="alert-empty">Loading port scans…</div>
+      </div>
+    </section>
+
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⊡</span>
+          Port Scan Records
+        </div>
+        <div class="card-meta" id="portscans-table-meta">—</div>
+      </div>
+      <div class="table-wrap">
+        <table class="batch-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Source IP</th>
+              <th>Target Ports</th>
+              <th>Scan Type</th>
+              <th>Count</th>
+              <th>Timestamp</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="portscans-table-body">
+            <tr><td colspan="7" class="table-empty">Waiting for data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- TAB: MULTI-STEP ATTACKS                                -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <main class="grid container hidden" id="tab-multistep">
+
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⋯</span>
+          Multi-Step Attack Chains — HBase
+        </div>
+        <div class="live-badge">⬡ BATCH</div>
+        <div class="card-meta" id="multistep-meta">—</div>
+      </div>
+      <div id="multistep-chains" class="chains-container">
+        <div class="alert-empty">Loading attack chains…</div>
+      </div>
+    </section>
+
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-icon">⋯</span>
+          Multi-Step Attack Table
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="batch-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Source IP</th>
+              <th>Steps</th>
+              <th>Pattern</th>
+              <th>Total Score</th>
+              <th>Duration</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="multistep-table-body">
+            <tr><td colspan="7" class="table-empty">Waiting for data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span>RAPID · Batch/HBase Layer · nine11-tech · SITCN2 · Université Ibn Zohr ENSA Agadir</span>
+    <span id="footer-updated">Last update: —</span>
+  </footer>
+
+  <script src="batch.js"></script>
+</body>
+</html>

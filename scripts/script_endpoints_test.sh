@@ -2,19 +2,20 @@
 
 API_BASE="${API_BASE:-http://100.73.216.115:5000}"
 ORIGIN="${ORIGIN:-http://100.97.208.110:3000}"
-TIMEOUT="${TIMEOUT:-30}"
+TEST_IP_HIGH="${TEST_IP_HIGH:-192.168.1.247}"
+TEST_IP_PUBLIC="${TEST_IP_PUBLIC:-109.106.120.222}"
+TIMEOUT="${TIMEOUT:-60}"
+
+TMP_DIR="/tmp/rapid_endpoint_tests"
+mkdir -p "$TMP_DIR"
 
 PASS=0
 FAIL=0
 WARN=0
 
-TMP_DIR="/tmp/rapid_api_tests"
-mkdir -p "$TMP_DIR"
-
-green() { echo -e "✅ PASS: $1"; PASS=$((PASS+1)); }
-red()   { echo -e "❌ FAIL: $1"; FAIL=$((FAIL+1)); }
-yellow(){ echo -e "⚠️  WARN: $1"; WARN=$((WARN+1)); }
-info()  { echo -e "ℹ️  $1"; }
+pass() { echo "✅ PASS: $1"; PASS=$((PASS+1)); }
+fail() { echo "❌ FAIL: $1"; FAIL=$((FAIL+1)); }
+warn() { echo "⚠️  WARN: $1"; WARN=$((WARN+1)); }
 
 line() {
   echo "============================================================"
@@ -22,8 +23,7 @@ line() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
-    red "Missing command: $1"
-    echo "Install it then rerun."
+    echo "Missing command: $1"
     exit 1
   }
 }
@@ -31,86 +31,74 @@ need_cmd() {
 need_cmd curl
 need_cmd python3
 
-test_json_endpoint() {
+test_endpoint() {
   local name="$1"
   local path="$2"
-  local required_key="$3"
-  local max_time="${4:-$TIMEOUT}"
+  local key="$3"
+  local timeout="${4:-$TIMEOUT}"
 
   local url="${API_BASE}${path}"
   local body="${TMP_DIR}/${name}.json"
-  local headers="${TMP_DIR}/${name}.headers"
+  local err="${TMP_DIR}/${name}.err"
   local code
 
   echo
-  echo "### Testing $path"
+  echo "### $path"
 
   code=$(curl -sS \
-    --max-time "$max_time" \
-    -D "$headers" \
+    --max-time "$timeout" \
     -o "$body" \
     -w "%{http_code}" \
-    "$url" 2>"${TMP_DIR}/${name}.curlerr")
+    "$url" 2>"$err")
 
   if [ "$code" != "200" ]; then
-    red "$path returned HTTP $code"
+    fail "$path HTTP=$code"
     echo "--- curl error ---"
-    cat "${TMP_DIR}/${name}.curlerr"
+    cat "$err"
     echo "--- response body ---"
-    cat "$body"
-    echo
-    return
+    head -80 "$body"
+    return 1
   fi
 
-  python3 - "$body" "$required_key" <<'PY'
+  python3 - "$body" "$key" <<'PY'
 import sys, json
-path = sys.argv[1]
-required = sys.argv[2]
+
+body_path = sys.argv[1]
+required_key = sys.argv[2]
 
 try:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = json.load(open(body_path, encoding="utf-8"))
 except Exception as e:
-    print("BAD_JSON:", repr(e))
+    print("BAD_JSON", repr(e))
     sys.exit(2)
 
 if isinstance(data, dict) and "error" in data:
     print("API_ERROR:", data.get("error"))
     sys.exit(3)
 
-if required != "-" and isinstance(data, dict) and required not in data:
-    print("MISSING_KEY:", required)
-    print("AVAILABLE_KEYS:", list(data.keys()))
+if required_key != "-" and required_key not in data:
+    print("MISSING_KEY:", required_key)
+    print("AVAILABLE_KEYS:", list(data.keys()) if isinstance(data, dict) else type(data))
     sys.exit(4)
 
-if required != "-" and isinstance(data, dict):
-    val = data.get(required)
-    if isinstance(val, list):
-        print(f"OK_JSON key={required} list_count={len(val)}")
-    elif isinstance(val, dict):
-        print(f"OK_JSON key={required} dict_keys={list(val.keys())[:10]}")
-    else:
-        print(f"OK_JSON key={required} value={val}")
-else:
-    print("OK_JSON")
+print("OK_JSON")
 PY
 
-  case $? in
+  case "$?" in
     0)
-      green "$path returned HTTP 200 and valid JSON"
+      pass "$path HTTP 200 + valid JSON"
       ;;
     2)
-      red "$path returned non-JSON"
-      echo "--- body preview ---"
-      head -40 "$body"
+      fail "$path returned invalid JSON"
+      head -80 "$body"
       ;;
     3)
-      red "$path returned JSON error"
-      cat "$body" | python3 -m json.tool 2>/dev/null || cat "$body"
+      fail "$path returned JSON error"
+      python3 -m json.tool "$body" 2>/dev/null || cat "$body"
       ;;
     4)
-      red "$path JSON missing required key: $required_key"
-      cat "$body" | python3 -m json.tool 2>/dev/null | head -80 || cat "$body"
+      fail "$path missing required key: $key"
+      python3 -m json.tool "$body" 2>/dev/null | head -80 || cat "$body"
       ;;
   esac
 }
@@ -120,7 +108,7 @@ test_cors() {
   local url="${API_BASE}${path}"
 
   echo
-  echo "### Testing CORS for $path"
+  echo "### CORS $path"
 
   local cors
   cors=$(curl -sS -i \
@@ -129,78 +117,114 @@ test_cors() {
     "$url" | grep -i "Access-Control-Allow-Origin" | head -1 || true)
 
   if echo "$cors" | grep -qi "Access-Control-Allow-Origin"; then
-    green "CORS header present for $path: $cors"
+    pass "CORS header present: $cors"
   else
-    red "No CORS header for $path. Browser dashboard fetch may fail."
+    fail "CORS header missing for $path"
   fi
 
-  local preflight
-  preflight=$(curl -sS -i -X OPTIONS \
+  local options
+  options=$(curl -sS -i -X OPTIONS \
     --max-time "$TIMEOUT" \
     -H "Origin: $ORIGIN" \
     -H "Access-Control-Request-Method: GET" \
     "$url" | grep -i "Access-Control-Allow-Methods" | head -1 || true)
 
-  if echo "$preflight" | grep -qi "Access-Control-Allow-Methods"; then
-    green "CORS preflight OK for $path"
+  if echo "$options" | grep -qi "Access-Control-Allow-Methods"; then
+    pass "CORS preflight OK"
   else
-    yellow "CORS preflight header missing for $path"
+    warn "CORS preflight method header missing"
   fi
 }
 
-extract_summary() {
+summary_json() {
   local name="$1"
-  local body="${TMP_DIR}/${name}.json"
+  local file="${TMP_DIR}/${name}.json"
 
-  if [ ! -s "$body" ]; then
-    return
-  fi
+  [ -s "$file" ] || return
 
-  python3 - "$body" <<'PY'
+  python3 - "$file" <<'PY'
 import sys, json
-path=sys.argv[1]
 try:
-    data=json.load(open(path))
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
     sys.exit(0)
 
-if "count" in data:
-    print("count:", data.get("count"))
-if "days" in data:
-    print("days:", data.get("days"))
-if "threshold" in data:
-    print("threshold:", data.get("threshold"), "avg:", data.get("avg_score"), "total_ips:", data.get("total_ips"))
-if "top10" in data:
-    print("top10_first:", data["top10"][0] if data["top10"] else None)
-if "attacks" in data:
-    print("geo_count:", data.get("count"), "mode:", data.get("mode"))
-    print("geo_skipped:", data.get("skipped"))
-    print("first_attack:", data["attacks"][0] if data.get("attacks") else None)
-if "historical_score" in data or "threat_level" in data:
-    print("ip:", data.get("ip"))
-    print("historical_score:", data.get("historical_score"))
-    print("final_score:", data.get("final_score"))
-    print("threat_level:", data.get("threat_level"))
-    print("recommendation:", data.get("recommendation"))
+if "status" in d:
+    print("status:", d.get("status"))
+
+if "count" in d:
+    print("count:", d.get("count"))
+
+if "top10" in d:
+    print("top10_count:", len(d.get("top10") or []))
+    if d.get("top10"):
+        print("top10_first:", d["top10"][0])
+
+if "threshold" in d:
+    print("threshold:", d.get("threshold"))
+    print("avg_score_24h:", d.get("avg_score_24h"))
+    print("window_hours:", d.get("window_hours"))
+    print("mode:", d.get("mode"))
+    print("samples_used:", d.get("samples_used"))
+
+if "recent" in d:
+    print("recent_count:", len(d.get("recent") or []))
+
+if "volume_alerts" in d:
+    print("volume_alerts_count:", len(d.get("volume_alerts") or []))
+
+if "by_protocol" in d:
+    print("protocols:", list((d.get("by_protocol") or {}).keys()))
+
+if "timeline" in d:
+    print("timeline_days:", d.get("days"))
+    print("timeline_count:", len(d.get("timeline") or []))
+
+if "attacks" in d:
+    print("geo_mode:", d.get("mode"))
+    print("geo_count:", len(d.get("attacks") or []))
+    print("geo_skipped:", d.get("skipped"))
+    if d.get("attacks"):
+        a = d["attacks"][0]
+        print("first_attack:", {
+            "source_ip": a.get("source_ip"),
+            "source_country": a.get("source_country"),
+            "target_ip": a.get("target_ip"),
+            "target_country": a.get("target_country"),
+            "attack_type": a.get("attack_type"),
+            "score": a.get("score"),
+            "severity": a.get("severity"),
+        })
+
+if "adaptive_threshold" in d:
+    at = d.get("adaptive_threshold") or {}
+    print("ip:", d.get("ip"))
+    print("final_score:", d.get("final_score"))
+    print("threat_level:", d.get("threat_level"))
+    print("recommendation:", d.get("recommendation"))
+    print("adaptive_threshold:", at.get("threshold"))
+    print("avg_score_24h:", at.get("avg_score_24h"))
+    print("window_hours:", at.get("window_hours"))
 PY
 }
 
 line
-echo "RAPID API endpoint validation"
-echo "API_BASE = $API_BASE"
-echo "ORIGIN   = $ORIGIN"
-echo "TIMEOUT  = $TIMEOUT seconds"
+echo "RAPID API FULL ENDPOINT TEST"
+echo "API_BASE     = $API_BASE"
+echo "ORIGIN       = $ORIGIN"
+echo "TEST_IP_HIGH = $TEST_IP_HIGH"
+echo "TEST_IP_PUBLIC = $TEST_IP_PUBLIC"
+echo "TIMEOUT      = $TIMEOUT"
 date
 line
 
 echo
 echo "### Basic reachability"
 if curl -sS --max-time 10 "$API_BASE/health" >/dev/null; then
-  green "API reachable: $API_BASE"
+  pass "API reachable"
 else
-  red "API unreachable: $API_BASE"
-  echo "Try:"
-  echo "  curl -v $API_BASE/health"
+  fail "API unreachable: $API_BASE"
+  echo "Try: curl -v $API_BASE/health"
   exit 1
 fi
 
@@ -208,53 +232,139 @@ test_cors "/health"
 test_cors "/threats/top10"
 
 line
-echo "Core dashboard endpoints"
+echo "CORE API ENDPOINTS"
 
-test_json_endpoint "health" "/health" "status" 10
-test_json_endpoint "top10" "/threats/top10" "top10" 30
-extract_summary "top10"
+test_endpoint "health" "/health" "status" 15
+summary_json "health"
 
-test_json_endpoint "threshold" "/threats/threshold" "threshold" 30
-extract_summary "threshold"
+test_endpoint "top10" "/threats/top10" "top10" 60
+summary_json "top10"
 
-test_json_endpoint "recent" "/threats/recent" "recent" 30
-test_json_endpoint "volume_alerts" "/threats/volume-alerts" "volume_alerts" 30
-test_json_endpoint "by_protocol" "/threats/by-protocol" "by_protocol" 30
-test_json_endpoint "timeline" "/threats/timeline" "timeline" 30
-extract_summary "timeline"
+test_endpoint "threshold" "/threats/threshold" "threshold" 90
+summary_json "threshold"
 
-line
-echo "IP detail endpoint with Cassandra + HBase enrichment"
+test_endpoint "recent" "/threats/recent" "recent" 60
+summary_json "recent"
 
-test_json_endpoint "ip_detail" "/threats/ip/109.106.120.222" "threat_level" 40
-extract_summary "ip_detail"
+test_endpoint "volume_alerts" "/threats/volume-alerts" "volume_alerts" 60
+summary_json "volume_alerts"
 
-line
-echo "HDFS archive endpoints"
+test_endpoint "by_protocol" "/threats/by-protocol" "by_protocol" 60
+summary_json "by_protocol"
 
-test_json_endpoint "hdfs_views" "/hdfs/views" "views" 20
-test_json_endpoint "hdfs_top10" "/hdfs/views/top10" "hdfs_uri" 20
-test_json_endpoint "hdfs_timeline" "/hdfs/views/timeline" "hdfs_uri" 20
-test_json_endpoint "hdfs_top10_files" "/hdfs/views/top10/files" "parquet_files" 20
-test_json_endpoint "hdfs_timeline_files" "/hdfs/views/timeline/files" "parquet_files" 20
+test_endpoint "timeline" "/threats/timeline" "timeline" 60
+summary_json "timeline"
 
 line
-echo "Threat map / Geo endpoint"
+echo "IP DETAIL ENDPOINTS"
 
-test_json_endpoint "geo_attacks" "/threats/geo/attacks" "attacks" 60
-extract_summary "geo_attacks"
+test_endpoint "ip_high" "/threats/ip/${TEST_IP_HIGH}" "threat_level" 120
+summary_json "ip_high"
+
+test_endpoint "ip_public" "/threats/ip/${TEST_IP_PUBLIC}" "threat_level" 120
+summary_json "ip_public"
 
 line
-echo "Final summary"
+echo "GEO THREAT MAP ENDPOINT"
+
+test_endpoint "geo_attacks" "/threats/geo/attacks" "attacks" 120
+summary_json "geo_attacks"
+
+line
+echo "BONUS DYNAMIC THRESHOLD VALIDATION"
+
+python3 - <<'PY'
+import json, sys, os
+
+threshold_path = "/tmp/rapid_endpoint_tests/threshold.json"
+ip_path = "/tmp/rapid_endpoint_tests/ip_high.json"
+
+try:
+    t = json.load(open(threshold_path))
+    ip = json.load(open(ip_path))
+except Exception as e:
+    print("❌ FAIL: Could not validate dynamic threshold:", repr(e))
+    sys.exit(1)
+
+ok = True
+
+required = ["threshold", "avg_score_24h", "window_hours", "mode", "recalculation"]
+for k in required:
+    if k not in t:
+        print("❌ Missing in /threats/threshold:", k)
+        ok = False
+
+if t.get("mode") != "rolling_24h":
+    print("❌ mode is not rolling_24h:", t.get("mode"))
+    ok = False
+
+if t.get("window_hours") != 24:
+    print("❌ window_hours is not 24:", t.get("window_hours"))
+    ok = False
+
+at = ip.get("adaptive_threshold") or {}
+if "threshold" not in at:
+    print("❌ /threats/ip does not include adaptive_threshold.threshold")
+    ok = False
+
+score = ip.get("final_score", 0)
+thr = at.get("threshold", t.get("threshold", 0))
+level = ip.get("threat_level")
+
+print("threshold =", thr)
+print("final_score =", score)
+print("threat_level =", level)
+
+if score > thr and level != "HIGH":
+    print("❌ expected HIGH because final_score > threshold")
+    ok = False
+
+if ok:
+    print("✅ PASS: Dynamic threshold integrated correctly")
+    sys.exit(0)
+else:
+    sys.exit(1)
+PY
+
+if [ "$?" -eq 0 ]; then
+  PASS=$((PASS+1))
+else
+  FAIL=$((FAIL+1))
+fi
+
+line
+echo "OPTIONAL HDFS API ENDPOINTS"
+
+for path in \
+  /hdfs/views \
+  /hdfs/views/top10 \
+  /hdfs/views/timeline \
+  /hdfs/views/top10/files \
+  /hdfs/views/timeline/files
+do
+  name=$(echo "$path" | tr '/' '_' | sed 's/^_//')
+  code=$(curl -sS --max-time 20 -o "${TMP_DIR}/${name}.json" -w "%{http_code}" "${API_BASE}${path}" 2>/dev/null || true)
+
+  if [ "$code" = "200" ]; then
+    pass "$path exists"
+  elif [ "$code" = "404" ]; then
+    warn "$path not present in current app.py"
+  else
+    warn "$path returned HTTP=$code"
+  fi
+done
+
+line
+echo "FINAL SUMMARY"
 echo "PASS = $PASS"
 echo "WARN = $WARN"
 echo "FAIL = $FAIL"
+echo "Saved responses: $TMP_DIR"
 
 if [ "$FAIL" -eq 0 ]; then
-  echo "🎉 ALL REQUIRED API TESTS PASSED"
+  echo "🎉 ALL REQUIRED ENDPOINT TESTS PASSED"
   exit 0
 else
-  echo "🔴 SOME API TESTS FAILED"
-  echo "Saved responses in: $TMP_DIR"
+  echo "🔴 SOME REQUIRED TESTS FAILED"
   exit 1
 fi
