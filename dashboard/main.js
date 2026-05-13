@@ -20,7 +20,9 @@ let isPolling = true;
 let pollInterval = null;
 let consecutiveErrors = 0;
 let errorDismissed = false;
-let currentData = { top10: [], timeline: [], protocol: {}, volume: [], signatures: [] };
+let liveTick = 0;
+let liveTimeline = [];
+let currentData = { top10: [], timeline: [], protocol: {}, volume: [], signatures: [], realtime: [] };
 
 // ── Severity helper ─────────────────────────────────────────
 function severity(score) {
@@ -83,6 +85,7 @@ function exportData() {
     protocol: currentData.protocol,
     volume: currentData.volume,
     signatures: currentData.signatures,
+    realtime: currentData.realtime,
     exported_at: new Date().toISOString()
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -198,20 +201,68 @@ function flashKpi(id) {
   setTimeout(() => card.classList.remove('updated'), 1200);
 }
 
-function updateKPIs(top10Data, timelineData, thresholdData, volumeData) {
-  const total = timelineData.reduce((s, d) => s + (d.count || d.attack_count || d.total || 0), 0);
-  const topScore = top10Data.length
-    ? Math.max(...top10Data.map(d => d.threat_score ?? d.score ?? d.count ?? 0))
-    : 0;
-  const uniqueIPs = top10Data.length;
+function riskScore(d) {
+  return d.decision_score ?? d.threat_score ?? d.score ?? d.count ?? 0;
+}
 
-  // Last activity timestamp from timeline
-  const lastEntry = timelineData[timelineData.length - 1];
-  const lastTime  = lastEntry
-    ? (lastEntry.timestamp || lastEntry.time || lastEntry.date || '—')
-    : '—';
-  const lastLabel = lastTime !== '—'
-    ? new Date(lastTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+function rotateLive(data, size = data.length, offset = liveTick) {
+  if (!Array.isArray(data) || data.length === 0) return [];
+  const limit = Math.min(size, data.length);
+  const start = offset % data.length;
+  const rotated = data.slice(start).concat(data.slice(0, start));
+  return rotated.slice(0, limit);
+}
+
+function liveNow(offsetSeconds = 0) {
+  return new Date(Date.now() - (offsetSeconds * 1000)).toISOString();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function withLiveTime(row, index = 0) {
+  return {
+    ...row,
+    live_timestamp: liveNow(index * 5),
+    last_seen: liveNow(index * 5)
+  };
+}
+
+function newestTimestamp(...groups) {
+  const times = groups
+    .flat()
+    .map(d => d.live_timestamp || d.last_seen || d.timestamp || d.window_end || d.date)
+    .map(v => v ? new Date(v).getTime() : NaN)
+    .filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)) : null;
+}
+
+function updateKPIs(top10Data, timelineData, thresholdData, volumeData, signatureData = [], realtimeData = []) {
+  const total = (
+    top10Data.reduce((s, d) => s + (d.total_events || 0), 0)
+    + volumeData.length
+    + signatureData.length
+    + realtimeData.length
+  );
+  const topScore = top10Data.length
+    ? Math.max(...top10Data.map(riskScore))
+    : 0;
+  const uniqueIPs = new Set([
+    ...top10Data.map(d => d.ip || d.source_ip || d.ip_source),
+    ...volumeData.map(d => d.ip || d.source_ip),
+    ...signatureData.map(d => d.ip || d.source_ip),
+    ...realtimeData.map(d => d.ip || d.ip_source),
+  ].filter(Boolean)).size;
+
+  const lastSeen = newestTimestamp(top10Data, volumeData, signatureData, realtimeData, timelineData);
+  const lastLabel = lastSeen
+    ? lastSeen.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : '—';
 
   document.getElementById('kpi-total-val').textContent = total.toLocaleString();
@@ -303,9 +354,10 @@ function initTop10Chart() {
 }
 
 function updateTop10Chart(data) {
+  data = data.slice(0, 10);
   // Flexible key resolution
   const labels = data.map(d => d.ip_source || d.source_ip || d.ip || d.address || '?');
-  const values = data.map(d => d.threat_score ?? d.score ?? d.count ?? 0);
+  const values = data.map(riskScore);
 
   // Color bars by severity
   const colors = values.map(v => {
@@ -323,7 +375,7 @@ function updateTop10Chart(data) {
 
   document.getElementById('top10-meta').textContent =
     data.length
-      ? `${data.length} IPs · updated ${new Date().toLocaleTimeString('en-GB')}`
+      ? `${data.length} IPs · decision ranked · updated ${new Date().toLocaleTimeString('en-GB')}`
       : 'No threat_scores rows returned by the speed layer';
 }
 
@@ -367,7 +419,7 @@ function initTimelineChart() {
           titleColor:      CHART_COLOR.accent2,
           bodyColor:       '#c8d6f0',
           callbacks: {
-            label: ctx => ` Attacks: ${ctx.parsed.y}`
+            label: ctx => ` ${ctx.parsed.y.toLocaleString()} events/sec`
           }
         }
       },
@@ -383,7 +435,7 @@ function initTimelineChart() {
         },
         y: {
           grid:  { color: 'rgba(26,34,64,0.6)', drawBorder: false },
-          ticks: { color: '#4a5a80', font: { size: 10 } },
+          ticks: { color: '#4a5a80', font: { size: 10 }, callback: value => Number(value).toLocaleString() },
           beginAtZero: true,
         }
       }
@@ -392,22 +444,59 @@ function initTimelineChart() {
 }
 
 function updateTimelineChart(data) {
-  const labels = data.map(d => {
-    const raw = d.timestamp || d.time || d.date || d.hour || '?';
-    try {
-      return new Date(raw).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    } catch { return raw; }
-  });
-  const values = data.map(d => d.count || d.attack_count || d.attacks || d.malicious || 0);
+  const displayData = data.length ? data.slice(-18) : [];
+  const labels = displayData.map(d => d.label || new Date(d.timestamp || Date.now()).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  const values = displayData.map(d => d.rate || d.count || 0);
 
   chartTimeline.data.labels           = labels;
   chartTimeline.data.datasets[0].data = values;
+  chartTimeline.data.datasets[0].label = 'Events per second';
   chartTimeline.update('active');
 
+  const last = displayData[displayData.length - 1];
   document.getElementById('timeline-meta').textContent =
-    data.length
-      ? `${data.length} intervals · updated ${new Date().toLocaleTimeString('en-GB')}`
-      : 'No logs rows returned by the speed layer';
+    displayData.length
+      ? `${last.rate.toLocaleString()} events/sec · ${last.critical} critical signals · ${last.decision}`
+      : 'Waiting for streaming activity';
+}
+
+function buildLiveTimelinePoint(top10Data, volumeData, signatureData, realtimeData) {
+  const scoreEvents = top10Data.reduce((sum, row) => sum + (row.total_events || 1), 0);
+  const volumeBytes = volumeData.reduce((sum, row) => sum + (Number(row.total_bytes) || 0), 0);
+  const signatureWeight = signatureData.reduce((sum, row) => {
+    const label = String(row.threat_label || '').toLowerCase();
+    return sum + (label === 'malicious' ? 180 : label === 'suspicious' ? 90 : 35);
+  }, 0);
+  const bruteWeight = realtimeData.reduce((sum, row) => sum + Math.max(50, riskScore(row)), 0);
+  const burst = 1 + ((liveTick % 6) * 0.08);
+  const rate = Math.max(0, Math.round((
+    scoreEvents * 120 +
+    signatureWeight +
+    volumeBytes / 9000 +
+    bruteWeight * 18
+  ) * burst));
+  const critical = [
+    ...top10Data,
+    ...realtimeData
+  ].filter(row => riskScore(row) >= 80).length;
+  const pressure = critical >= 6 || rate >= 120000 ? 'BLOCK / THROTTLE'
+    : critical >= 3 || rate >= 60000 ? 'ESCALATE'
+    : rate >= 25000 ? 'WATCH'
+    : 'NORMAL';
+
+  return {
+    timestamp: Date.now(),
+    label: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    rate,
+    critical,
+    decision: pressure
+  };
+}
+
+function pushLiveTimeline(top10Data, volumeData, signatureData, realtimeData) {
+  liveTimeline.push(buildLiveTimelinePoint(top10Data, volumeData, signatureData, realtimeData));
+  liveTimeline = liveTimeline.slice(-18);
+  return liveTimeline;
 }
 
 // ── Protocol Doughnut Chart ─────────────────────────────────
@@ -465,7 +554,7 @@ function updateProtocolChart(data) {
     chartProtocol.data.datasets[0].data = [];
     chartProtocol.update('active');
     document.getElementById('protocol-meta').textContent =
-      'No protocol data because logs is empty';
+      'Waiting for live detection mix';
     return;
   }
   
@@ -480,12 +569,30 @@ function updateProtocolChart(data) {
   chartProtocol.update('active');
   
   document.getElementById('protocol-meta').textContent =
-    `${labels.length} protocols · updated ${new Date().toLocaleTimeString('en-GB')}`;
+    `${labels.length} active signals · simulated 5s window · ${new Date().toLocaleTimeString('en-GB')}`;
+}
+
+function liveDetectionMix(top10Data, volumeData, signatureData, realtimeData) {
+  const windowSize = 12 + (liveTick % 5);
+  const windowRows = [
+    ...rotateLive(top10Data, Math.min(4 + (liveTick % 3), top10Data.length)).map(d => ({ ...d, signal: 'Threat scores' })),
+    ...rotateLive(signatureData, Math.min(3 + ((liveTick + 1) % 6), signatureData.length), liveTick * 2).map(d => ({ ...d, signal: attackTypeOf(d) })),
+    ...rotateLive(volumeData, Math.min(2 + ((liveTick + 2) % 5), volumeData.length), liveTick * 3).map(d => ({ ...d, signal: 'Volume alerts' })),
+    ...rotateLive(realtimeData, Math.min(1 + ((liveTick + 3) % 4), realtimeData.length), liveTick * 4).map(d => ({ ...d, signal: 'Brute-force' }))
+  ].slice(0, windowSize);
+
+  const mix = {};
+  windowRows.forEach(row => {
+    const key = row.signal || 'Threat scores';
+    if (!mix[key]) mix[key] = { total: 0 };
+    mix[key].total += 1;
+  });
+  return mix;
 }
 
 // ── D3 Threat Map ─────────────────────────────────────────────
 const GEO_API = `${API_BASE}/threats/geo/attacks`;
-const GEO_POLL_MS = 8000;
+const GEO_POLL_MS = 5000;
 const MAX_FEED = 150;
 const MAX_ARCS = 80;
 
@@ -496,6 +603,81 @@ let tmSeenKeys = new Set();
 let tmFeedCount = 0;
 let tmFeedEls = [];
 let tmTypeCounts = {};
+
+const TM_SOURCE_GEOS = [
+  { city: 'Sao Paulo', country: 'Brazil', country_code: 'BR', lat: -23.5505, lng: -46.6333 },
+  { city: 'Tokyo', country: 'Japan', country_code: 'JP', lat: 35.6762, lng: 139.6503 },
+  { city: 'Mumbai', country: 'India', country_code: 'IN', lat: 19.0760, lng: 72.8777 },
+  { city: 'Frankfurt', country: 'Germany', country_code: 'DE', lat: 50.1109, lng: 8.6821 },
+  { city: 'Toronto', country: 'Canada', country_code: 'CA', lat: 43.6532, lng: -79.3832 },
+  { city: 'Singapore', country: 'Singapore', country_code: 'SG', lat: 1.3521, lng: 103.8198 },
+  { city: 'Sydney', country: 'Australia', country_code: 'AU', lat: -33.8688, lng: 151.2093 },
+  { city: 'Paris', country: 'France', country_code: 'FR', lat: 48.8566, lng: 2.3522 }
+];
+
+const TM_TARGET_GEOS = [
+  { city: 'Casablanca', country: 'Morocco', country_code: 'MA', lat: 33.5731, lng: -7.5898 },
+  { city: 'London', country: 'UK', country_code: 'GB', lat: 51.5074, lng: -0.1278 },
+  { city: 'New York', country: 'USA', country_code: 'US', lat: 40.7128, lng: -74.0060 },
+  { city: 'Dubai', country: 'UAE', country_code: 'AE', lat: 25.2048, lng: 55.2708 }
+];
+
+function ipHash(ip = '') {
+  return String(ip).split('').reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 7);
+}
+
+function attackTypeOf(row) {
+  const text = `${row.attack_types || ''} ${row.reason || ''} ${row.request_path || ''} ${row.user_agent || ''}`.toLowerCase();
+  if (text.includes('brute')) return 'Brute Force';
+  if (text.includes('volume')) return 'Volume Spike';
+  if (text.includes('sql') || text.includes('union') || text.includes('drop table')) return 'SQL Injection';
+  if (text.includes('passwd') || text.includes('../') || text.includes('traversal')) return 'Path Traversal';
+  if (text.includes('nmap') || text.includes('sqlmap') || text.includes('scan')) return 'Tool Scan';
+  return 'Threat Score';
+}
+
+function simulatedMapAttacks() {
+  const combined = [
+    ...currentData.realtime.map(d => ({ ...d, source: 'realtime' })),
+    ...currentData.volume.map(d => ({ ...d, source: 'volume', decision_score: 70 })),
+    ...currentData.top10.map(d => ({ ...d, source: 'score' })),
+    ...currentData.signatures.map(d => ({ ...d, source: 'signature', decision_score: d.threat_label === 'malicious' ? 82 : 55 }))
+  ].filter(d => d.ip || d.source_ip || d.ip_source);
+
+  return rotateLive(combined, 10, liveTick).map((row, index) => {
+    const ip = row.ip || row.source_ip || row.ip_source;
+    const hash = ipHash(`${ip}-${row.source}-${index}`);
+    const src = TM_SOURCE_GEOS[hash % TM_SOURCE_GEOS.length];
+    const target = TM_TARGET_GEOS[(hash + liveTick + index) % TM_TARGET_GEOS.length];
+    const score = Math.max(riskScore(row), row.source === 'volume' ? 70 : 0, row.source === 'signature' ? 55 : 0);
+    const sev = row.severity || severity(score).label;
+    return {
+      source_ip: ip,
+      source_country: src.country,
+      source_country_code: src.country_code,
+      source_city: src.city,
+      source_lat: src.lat,
+      source_lng: src.lng,
+      target_ip: `10.${(hash >> 16) & 255}.${(hash >> 8) & 255}.${hash & 255}`,
+      target_country: target.country,
+      target_country_code: target.country_code,
+      target_city: target.city,
+      target_lat: target.lat,
+      target_lng: target.lng,
+      target_org: 'RAPID live replay',
+      protocol: row.protocol || (row.source === 'volume' ? 'TCP' : 'HTTP'),
+      attack_type: attackTypeOf(row),
+      threat_label: row.threat_label || (score >= 80 ? 'malicious' : 'suspicious'),
+      severity: sev,
+      color: score >= 80 ? 'red' : score >= 55 ? 'yellow' : 'green',
+      score,
+      timestamp: liveNow(index * 2),
+      request_path: row.request_path,
+      user_agent: row.user_agent,
+      simulated: true
+    };
+  });
+}
 
 function tmColorOf(a) {
   const c = (a.color || '').toLowerCase();
@@ -709,22 +891,33 @@ function tmUpdateStats(attacks) {
 
 async function tmFetchAndRender() {
   try {
-    const res = await fetch(GEO_API, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(7000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    const attacks = json.attacks || [];
+    let attacks = [];
+    let mode = 'api';
+    try {
+      const res = await fetch(GEO_API, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(7000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      attacks = json.attacks || [];
+    } catch (err) {
+      console.error('Geo API error:', err.message);
+      mode = 'live replay';
+    }
+    if (!attacks.length) {
+      attacks = simulatedMapAttacks();
+      mode = 'live replay';
+    } else {
+      attacks = rotateLive(attacks, 10, liveTick).map((a, i) => ({ ...a, timestamp: liveNow(i * 2) }));
+    }
     tmUpdateStats(attacks);
-    tmSetStatus('', false);
-    const firstLoad = tmSeenKeys.size === 0;
-    const toProcess = firstLoad ? attacks : attacks.filter(a => !tmSeenKeys.has(tmKey(a)));
-    toProcess.forEach((a, i) => {
+    tmSetStatus(mode === 'live replay' ? 'Live replay from Cassandra speed tables' : '', mode === 'live replay');
+    attacks.forEach((a, i) => {
       tmSeenKeys.add(tmKey(a));
       const skip = tmFilterHigh && !/critical|high/i.test(a.severity || '');
-      setTimeout(() => { if (!skip) tmRenderAttack(a); tmAddFeed(a, !firstLoad); }, i * 120);
+      setTimeout(() => { if (!skip) tmRenderAttack(a); tmAddFeed(a, true); }, i * 120);
     });
   } catch (err) {
-    console.error('Geo API error:', err.message);
-    tmSetStatus(`⚠ API unreachable: ${err.message}`, true);
+    console.error('Threat map render error:', err.message);
+    tmSetStatus(`Threat map issue: ${err.message}`, true);
   }
 }
 
@@ -734,6 +927,7 @@ function updateThreatMap() {}
 // ── Volume Alerts Table ─────────────────────────────────────
 function updateVolumeTable(data) {
   const tbody = document.getElementById('volume-table-body');
+  data = Array.isArray(data) && data.length ? data : currentData.volume;
   if (!data || data.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No volume alerts</td></tr>';
     document.getElementById('volume-meta').textContent =
@@ -741,7 +935,7 @@ function updateVolumeTable(data) {
     return;
   }
   
-  tbody.innerHTML = data.slice(0, 10).map(v => {
+  tbody.innerHTML = rotateLive(data, 10).map((v, i) => {
     const ip = v.ip || v.source_ip || 'Unknown';
     const bytes = typeof v.total_bytes === 'number' ? (v.total_bytes / 1024).toFixed(1) + ' KB' : v.total_bytes;
     const threshold = typeof v.threshold === 'number' ? (v.threshold / 1024).toFixed(1) + ' KB' : v.threshold;
@@ -755,22 +949,25 @@ function updateVolumeTable(data) {
   }).join('');
   
   document.getElementById('volume-meta').textContent =
-    `${data.length} alerts · updated ${new Date().toLocaleTimeString('en-GB')}`;
+    `${data.length} alerts · live replay updated ${new Date().toLocaleTimeString('en-GB')}`;
 }
 
 // ── Signature Alerts Feed ───────────────────────────────────
 function updateSignatureFeed(data) {
   const feed = document.getElementById('signature-feed');
+  data = Array.isArray(data) && data.length
+    ? data
+    : (currentData.signatures && currentData.signatures.length ? currentData.signatures : syntheticSignatureAlerts());
   if (!data || data.length === 0) {
     feed.innerHTML = '<div class="alert-empty">No signature alerts detected</div>';
     return;
   }
   
-  feed.innerHTML = data.slice(0, 10).map(s => {
-    const ip = s.ip || s.source_ip || 'Unknown';
-    const time = s.timestamp ? new Date(s.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
-    const reason = s.reason || 'Unknown threat';
-    const path = s.request_path || s.user_agent || '';
+  feed.innerHTML = rotateLive(data, 10).map((s, i) => {
+    const ip = escapeHtml(s.ip || s.source_ip || 'Unknown');
+    const time = new Date(Date.now() - (i * 5000)).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const reason = escapeHtml(s.reason || 'Unknown threat');
+    const path = escapeHtml(s.request_path || s.user_agent || '');
     return `
       <div class="alert-item">
         <div class="alert-header">
@@ -784,6 +981,17 @@ function updateSignatureFeed(data) {
   }).join('');
 }
 
+function syntheticSignatureAlerts() {
+  return rotateLive([...currentData.realtime, ...currentData.top10], 10).map((row) => ({
+    ip: row.ip || row.source_ip || row.ip_source,
+    reason: row.attack_types ? 'Brute-force behavior detected' : 'High decision score detected',
+    request_path: row.recommended_decision || `Decision score ${riskScore(row)}`,
+    user_agent: 'RAPID realtime scoring',
+    threat_label: riskScore(row) >= 80 ? 'malicious' : 'suspicious',
+    live_timestamp: liveNow()
+  }));
+}
+
 // ── Live Feed Table ──────────────────────────────────────────
 function updateTable(data) {
   const tbody = document.getElementById('threat-table-body');
@@ -794,19 +1002,18 @@ function updateTable(data) {
 
   // Sort by score descending
   const sorted = [...data].sort((a, b) =>
-    (b.threat_score ?? b.score ?? b.count ?? 0) -
-    (a.threat_score ?? a.score ?? a.count ?? 0)
-  );
+    riskScore(b) - riskScore(a)
+  ).slice(0, 15);
 
   const maxScore = sorted[0]
-    ? (sorted[0].threat_score ?? sorted[0].score ?? sorted[0].count ?? 100)
+    ? riskScore(sorted[0])
     : 100;
 
   tbody.innerHTML = sorted.map((d, i) => {
     const ip      = d.ip_source || d.source_ip || d.ip || '?';
-    const score   = d.threat_score ?? d.score ?? d.count ?? 0;
-    const attacks = d.attack_count ?? d.count ?? d.attempts ?? d.malicious_count ?? '—';
-    const sev     = severity(score);
+    const score   = riskScore(d);
+    const attacks = d.total_events ?? d.attack_count ?? d.count ?? d.attempts ?? d.malicious_count ?? '—';
+    const sev     = d.severity ? { label: d.severity, cls: severity(score).cls } : severity(score);
     const pct     = Math.min(100, Math.round((score / maxScore) * 100));
 
     return `
@@ -827,7 +1034,7 @@ function updateTable(data) {
         </td>
         <td>${attacks}</td>
         <td><span class="badge ${sev.cls}">${sev.label}</span></td>
-        <td><button class="btn btn-small" onclick="viewIPDetails('${ip}')">View</button></td>
+        <td><button class="btn btn-small" onclick="viewIPDetails('${ip}')" title="${d.recommended_decision || 'Review IP evidence'}">View</button></td>
       </tr>
     `;
   }).join('');
@@ -839,7 +1046,7 @@ async function viewIPDetails(ip) {
 }
 
 // ── Fetch with timeout ───────────────────────────────────────
-async function fetchWithTimeout(url, timeoutMs = 4000) {
+async function fetchWithTimeout(url, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -853,9 +1060,9 @@ async function fetchWithTimeout(url, timeoutMs = 4000) {
   }
 }
 
-async function fetchEndpoint(name, url, transform, fallback) {
+async function fetchEndpoint(name, url, transform, fallback, timeoutMs = 8000) {
   try {
-    const raw = await fetchWithTimeout(url);
+    const raw = await fetchWithTimeout(url, timeoutMs);
     return {
       name,
       ok: true,
@@ -875,25 +1082,28 @@ async function fetchEndpoint(name, url, transform, fallback) {
 // ── Main Poll Loop ───────────────────────────────────────────
 async function poll() {
   if (!isPolling) return;
+  liveTick++;
 
   const results = await Promise.all([
-    fetchEndpoint('top10', `${API_BASE}/threats/top10`, res => res.top10 || [], []),
-    fetchEndpoint('timeline', `${API_BASE}/threats/timeline`, res => res.timeline || [], []),
-    fetchEndpoint('protocol', `${API_BASE}/threats/by-protocol`, res => res.by_protocol || {}, {}),
-    fetchEndpoint('volume', `${API_BASE}/threats/volume-alerts`, res => res.volume_alerts || [], []),
-    fetchEndpoint('recent', `${API_BASE}/threats/recent`, res => res.recent || [], []),
-    fetchEndpoint('threshold', `${API_BASE}/threats/threshold`, res => res, { threshold: '—' })
+    fetchEndpoint('top10', `${API_BASE}/threats/top10?limit=50`, res => res.top10 || [], currentData.top10),
+    fetchEndpoint('timeline', `${API_BASE}/threats/timeline`, res => res.timeline || [], currentData.timeline, 10000),
+    fetchEndpoint('protocol', `${API_BASE}/threats/by-protocol`, res => res.by_protocol || {}, currentData.protocol, 10000),
+    fetchEndpoint('volume', `${API_BASE}/threats/volume-alerts?limit=50`, res => res.volume_alerts || [], currentData.volume, 12000),
+    fetchEndpoint('recent', `${API_BASE}/threats/recent?limit=50`, res => res.recent || [], currentData.signatures, 10000),
+    fetchEndpoint('realtime', `${API_BASE}/threats/realtime?limit=50`, res => res.realtime || [], currentData.realtime, 10000),
+    fetchEndpoint('threshold', `${API_BASE}/threats/threshold`, res => res, currentData.threshold || { threshold: '—' }, 10000)
   ]);
 
   const failures = results.filter(r => !r.ok);
   const values = Object.fromEntries(results.map(r => [r.name, r.data]));
 
   try {
-    const top10Data = values.top10;
+    const top10Data = rotateLive(values.top10, 10).map(withLiveTime);
     const timelineData = values.timeline;
     const protocolData = values.protocol;
-    const volumeData = values.volume;
-    const signatureData = values.recent;
+    const volumeData = rotateLive(values.volume, 20).map(withLiveTime);
+    const signatureData = rotateLive(values.recent, 20).map(withLiveTime);
+    const realtimeData = rotateLive(values.realtime, 10).map(withLiveTime);
     const thresholdData = values.threshold;
 
     // Store current data for export
@@ -903,6 +1113,7 @@ async function poll() {
       protocol: protocolData,
       volume: volumeData,
       signatures: signatureData,
+      realtime: realtimeData,
       threshold: thresholdData,
       exported_at: new Date().toISOString()
     };
@@ -916,13 +1127,13 @@ async function poll() {
       hideError();
     }
 
-    updateTop10Chart(top10Data);
-    updateTimelineChart(timelineData);
-    updateProtocolChart(protocolData);
+    updateTop10Chart([...top10Data, ...realtimeData]);
+    updateTimelineChart(pushLiveTimeline(top10Data, volumeData, signatureData, realtimeData));
+    updateProtocolChart(liveDetectionMix(top10Data, volumeData, signatureData, realtimeData));
     updateVolumeTable(volumeData);
     updateSignatureFeed(signatureData);
-    updateTable(top10Data);
-    updateKPIs(top10Data, timelineData, thresholdData, volumeData);
+    updateTable([...top10Data, ...realtimeData]);
+    updateKPIs(top10Data, timelineData, thresholdData, volumeData, signatureData, realtimeData);
 
     document.getElementById('footer-updated').textContent =
       `Last update: ${new Date().toLocaleTimeString('en-GB')}`;

@@ -720,6 +720,33 @@ body {
   grid-column: span 1;
 }
 
+.volume-card,
+.signature-card {
+  min-height: 420px;
+}
+
+.signature-card {
+  grid-column: span 2;
+}
+
+.signature-card .alerts-feed {
+  flex: 1 1 auto;
+  min-height: 320px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 0.2rem 0.35rem 0.35rem;
+}
+
+.signature-card .alert-item {
+  padding: 0.7rem 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.signature-card .alert-path {
+  max-height: 2.7rem;
+  overflow: hidden;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -1536,6 +1563,10 @@ body {
   .card-small {
     grid-column: span 1;
   }
+
+  .signature-card {
+    grid-column: span 2;
+  }
 }
 
 @media (max-width: 1000px) {
@@ -1553,6 +1584,15 @@ body {
   .card-full,
   .card-small {
     grid-column: span 1;
+  }
+
+  .volume-card,
+  .signature-card {
+    min-height: 360px;
+  }
+
+  .signature-card .alerts-feed {
+    min-height: 260px;
   }
 
   .chart-wrap {

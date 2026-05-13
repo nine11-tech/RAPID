@@ -88,6 +88,42 @@ def get_int_arg(name, default, minimum, maximum):
         value = default
     return max(minimum, min(value, maximum))
 
+def speed_decision_score(row):
+    stored = int(getattr(row, "score", 0) or getattr(row, "threat_score", 0) or 0)
+    malicious = int(getattr(row, "malicious_count", 0) or 0)
+    suspicious = int(getattr(row, "suspicious_count", 0) or 0)
+    total = int(getattr(row, "total_events", 0) or 0)
+    brute = 0
+    attack_types = str(getattr(row, "attack_types", "") or "").lower()
+    if "brute" in attack_types:
+        brute = max(1, stored // 10)
+
+    evidence_score = (
+        malicious * 35
+        + suspicious * 14
+        + brute * 18
+        + min(total, 50)
+    )
+    return min(100, max(stored, evidence_score))
+
+def speed_severity(score):
+    if score >= 80:
+        return "CRITICAL"
+    if score >= 60:
+        return "HIGH"
+    if score >= 35:
+        return "MEDIUM"
+    return "LOW"
+
+def speed_decision(score):
+    if score >= 80:
+        return "Block source and investigate related traffic"
+    if score >= 60:
+        return "Quarantine or rate-limit while reviewing evidence"
+    if score >= 35:
+        return "Monitor closely and correlate with signatures"
+    return "Monitor; no immediate block"
+
 def event_score(row):
     """
     Convert one log event into a normalized score from 0 to 100.
@@ -385,22 +421,27 @@ def get_threat_by_ip(ip):
 def get_top10():
     try:
         session, _cluster = get_cassandra()
+        limit = get_int_arg("limit", 10, 1, 100)
         rows = session.execute(
             "SELECT source_ip, score, malicious_count, suspicious_count, total_events, last_seen FROM threat_scores"
         )
 
         data = []
         for r in rows:
+            decision_score = speed_decision_score(r)
             data.append({
                 "ip": r.source_ip,
                 "score": r.score,
+                "decision_score": decision_score,
+                "severity": speed_severity(decision_score),
+                "recommended_decision": speed_decision(decision_score),
                 "malicious_count": r.malicious_count,
                 "suspicious_count": r.suspicious_count,
                 "total_events": r.total_events,
                 "last_seen": to_json_value(r.last_seen)
             })
 
-        data = sorted(data, key=lambda x: x["score"] or 0, reverse=True)[:10]
+        data = sorted(data, key=lambda x: x["decision_score"] or 0, reverse=True)[:limit]
         return jsonify(to_json_value({"top10": data, "count": len(data)}))
 
     except Exception as e:
@@ -422,8 +463,9 @@ def get_threshold():
 def get_recent():
     try:
         session, _cluster = get_cassandra()
+        limit = get_int_arg("limit", 10, 1, 100)
         rows = session.execute(
-            "SELECT source_ip, timestamp, reason, request_path, user_agent, threat_label FROM signature_alerts LIMIT 10"
+            "SELECT source_ip, timestamp, reason, request_path, user_agent, threat_label FROM signature_alerts LIMIT 1000"
         )
 
         data = [{
@@ -435,6 +477,12 @@ def get_recent():
             "threat_label": r.threat_label
         } for r in rows]
 
+        data = sorted(
+            data,
+            key=lambda x: parse_datetime_value(x.get("timestamp")) or datetime.min,
+            reverse=True
+        )[:limit]
+
         return jsonify(to_json_value({"recent": data}))
 
     except Exception as e:
@@ -444,8 +492,9 @@ def get_recent():
 def get_volume_alerts():
     try:
         session, _cluster = get_cassandra()
+        limit = get_int_arg("limit", 20, 1, 100)
         rows = session.execute(
-            "SELECT source_ip, window_start, window_end, total_bytes, threshold, reason FROM volume_alerts LIMIT 20"
+            "SELECT source_ip, window_start, window_end, total_bytes, threshold, reason FROM volume_alerts LIMIT 1000"
         )
 
         data = [{
@@ -457,7 +506,49 @@ def get_volume_alerts():
             "reason": r.reason
         } for r in rows]
 
+        data = sorted(
+            data,
+            key=lambda x: parse_datetime_value(x.get("window_end")) or datetime.min,
+            reverse=True
+        )[:limit]
+
         return jsonify(to_json_value({"volume_alerts": data}))
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/threats/realtime")
+def get_realtime_threats():
+    try:
+        session, _cluster = get_cassandra()
+        limit = get_int_arg("limit", 20, 1, 100)
+        rows = session.execute(
+            "SELECT ip_source, last_seen, attack_types, threat_score FROM realtime_threats LIMIT 1000"
+        )
+
+        data = []
+        for r in rows:
+            decision_score = speed_decision_score(r)
+            data.append({
+                "ip": r.ip_source,
+                "last_seen": to_json_value(r.last_seen),
+                "attack_types": r.attack_types,
+                "threat_score": r.threat_score,
+                "decision_score": decision_score,
+                "severity": speed_severity(decision_score),
+                "recommended_decision": speed_decision(decision_score)
+            })
+
+        data = sorted(
+            data,
+            key=lambda x: (
+                x["decision_score"] or 0,
+                parse_datetime_value(x.get("last_seen")) or datetime.min
+            ),
+            reverse=True
+        )[:limit]
+
+        return jsonify(to_json_value({"realtime": data, "count": len(data)}))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -521,6 +612,31 @@ def get_timeline():
                 by_day[day]["malicious"] += 1
             elif r.threat_label == "suspicious":
                 by_day[day]["suspicious"] += 1
+
+        source = "logs"
+        if not by_day:
+            source = "signature_alerts"
+            rows = session.execute(
+                "SELECT timestamp, threat_label FROM signature_alerts LIMIT 5000"
+            )
+            for r in rows:
+                if not r.timestamp:
+                    continue
+
+                day = str(r.timestamp)[:10]
+                if day not in by_day:
+                    by_day[day] = {
+                        "date": day,
+                        "total": 0,
+                        "malicious": 0,
+                        "suspicious": 0
+                    }
+
+                by_day[day]["total"] += 1
+                if r.threat_label == "malicious":
+                    by_day[day]["malicious"] += 1
+                elif r.threat_label == "suspicious":
+                    by_day[day]["suspicious"] += 1
 
         timeline = sorted(by_day.values(), key=lambda x: x["date"])
         return jsonify({"timeline": timeline, "days": len(timeline)})
