@@ -42,7 +42,6 @@
       <div class="logo-sub">Real-time Attack Pattern Identification & Detection</div>
       <div class="nav-links" style="margin-left: 2rem;">
         <a href="batch.html" class="btn btn-primary">
-          <span class="nav-icon">⬡</span>
           Batch Analytics
         </a>
       </div>
@@ -65,7 +64,8 @@
   <div class="error-banner" id="error-banner" hidden>
     <span class="err-icon">⚠</span>
     <span id="error-msg">API unreachable — retrying…</span>
-    <button onclick="document.getElementById('error-banner').hidden=true">✕</button>
+    <button id="error-dismiss" type="button" aria-label="Dismiss API warning"
+      onclick="window.errorDismissed=true; document.getElementById('error-banner').hidden=true">✕</button>
   </div>
 
   <!-- Controls Bar -->
@@ -150,7 +150,6 @@
     <section class="card card-wide">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Top 10 Malicious IPs
         </div>
         <div class="card-meta" id="top10-meta">—</div>
@@ -164,7 +163,6 @@
     <section class="card card-wide">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Protocol Distribution
         </div>
         <div class="card-meta" id="protocol-meta">—</div>
@@ -178,7 +176,6 @@
     <section class="card card-full threatmap-card">
       <div class="card-header threatmap-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Global Threat Map
         </div>
         <div class="threatmap-stats">
@@ -192,7 +189,7 @@
           </div>
         </div>
         <div class="threatmap-controls">
-          <div class="live-badge">● LIVE</div>
+          <div class="live-badge">LIVE</div>
           <button class="btn btn-small" id="tm-btn-all">All</button>
           <button class="btn btn-small" id="tm-btn-hi">High</button>
           <button class="btn btn-small" id="tm-btn-pause">⏸</button>
@@ -213,7 +210,7 @@
         <!-- Attack Feed -->
         <div class="tm-feed">
           <div class="tm-feed-head">
-            <span class="tm-feed-title">⚡ Attack Feed</span>
+            <span class="tm-feed-title">Attack Feed</span>
             <span class="tm-feed-cnt" id="tm-feed-cnt">0</span>
           </div>
           <div class="tm-feed-scroll" id="tm-feed-scroll"></div>
@@ -242,7 +239,6 @@
     <section class="card card-wide">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Attack Timeline
         </div>
         <div class="card-meta" id="timeline-meta">—</div>
@@ -256,7 +252,6 @@
     <section class="card card-small">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Volume Alerts
         </div>
         <div class="card-meta" id="volume-meta">—</div>
@@ -283,10 +278,9 @@
     <section class="card card-small">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Signature Alerts
         </div>
-        <div class="live-badge">● LIVE</div>
+        <div class="live-badge">LIVE</div>
       </div>
       <div class="alerts-feed" id="signature-feed">
         <div class="alert-empty">No signature alerts detected</div>
@@ -297,10 +291,9 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Top Threats Overview
         </div>
-        <div class="live-badge">● LIVE</div>
+        <div class="live-badge">LIVE</div>
       </div>
       <div class="table-wrap">
         <table class="threat-table">

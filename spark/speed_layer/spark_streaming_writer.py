@@ -9,6 +9,11 @@ CHAWI_IP       = os.getenv("CHAWI_IP", "100.97.208.110")
 KAFKA_BROKER   = f"{ANASS_IP}:9092"
 CASSANDRA_HOST = CHAWI_IP
 TOPIC          = "cybersecurity-logs"
+STARTING_OFFSETS = os.getenv("RAPID_STARTING_OFFSETS", "earliest")
+CHECKPOINT_LOCATION = os.getenv(
+    "RAPID_LOGS_CHECKPOINT",
+    "/tmp/rapid_streaming/kafka_to_cassandra_logs"
+)
 
 print(f"[INFO] Kafka     : {KAFKA_BROKER}")
 print(f"[INFO] Cassandra : {CASSANDRA_HOST}:9042")
@@ -45,7 +50,7 @@ raw_df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BROKER) \
     .option("subscribe", TOPIC) \
-    .option("startingOffsets", "earliest") \
+    .option("startingOffsets", STARTING_OFFSETS) \
     .option("failOnDataLoss", "false") \
     .option("kafka.request.timeout.ms", "600000") \
     .option("kafka.session.timeout.ms", "600000") \
@@ -71,7 +76,7 @@ def write_to_cassandra(batch_df, batch_id):
 
 query = parsed_df.writeStream \
     .foreachBatch(write_to_cassandra) \
-    .option("checkpointLocation", "/tmp/spark_checkpoint_kafka_cassandra") \
+    .option("checkpointLocation", CHECKPOINT_LOCATION) \
     .trigger(processingTime="60 seconds") \
     .start()
 

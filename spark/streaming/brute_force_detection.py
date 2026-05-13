@@ -17,11 +17,17 @@ from pyspark.sql.functions import (
     current_timestamp, lit
 )
 from pyspark.sql.types import StructType, StructField, StringType, LongType
+import os
 
 KAFKA_HOST     = "100.73.216.115:9092"
 CASSANDRA_HOST = "100.97.208.110"
 KEYSPACE       = "cybersecurity"
 TABLE          = "realtime_threats"
+STARTING_OFFSETS = os.getenv("RAPID_STARTING_OFFSETS", "earliest")
+CHECKPOINT_LOCATION = os.getenv(
+    "RAPID_BRUTE_FORCE_CHECKPOINT",
+    "/tmp/rapid_streaming/brute_force"
+)
 
 schema = StructType([
     StructField("timestamp",         StringType()),
@@ -58,7 +64,7 @@ raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_HOST) \
     .option("subscribe", "cybersecurity-logs") \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", STARTING_OFFSETS) \
     .option("maxOffsetsPerTrigger", 1000) \
     .option("failOnDataLoss", "false") \
     .option("kafka.request.timeout.ms", "120000") \
@@ -118,7 +124,7 @@ def write_to_cassandra(batch_df, batch_id):
 query = brute_force.writeStream \
     .outputMode("update") \
     .foreachBatch(write_to_cassandra) \
-    .option("checkpointLocation", "/home/jovyan/work/streaming/chkpt_brute") \
+    .option("checkpointLocation", CHECKPOINT_LOCATION) \
     .trigger(processingTime="30 seconds") \
     .start()
 

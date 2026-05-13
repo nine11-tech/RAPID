@@ -19,11 +19,17 @@ from pyspark.sql.functions import (
     regexp_extract, date_format
 )
 from pyspark.sql.types import StructType, StructField, StringType, LongType
+import os
 
 KAFKA_HOST     = "100.73.216.115:9092"
 CASSANDRA_HOST = "100.97.208.110"
 KEYSPACE       = "cybersecurity"
 TABLE          = "signature_alerts"
+STARTING_OFFSETS = os.getenv("RAPID_STARTING_OFFSETS", "earliest")
+CHECKPOINT_LOCATION = os.getenv(
+    "RAPID_SIGNATURES_CHECKPOINT",
+    "/tmp/rapid_streaming/signatures"
+)
 
 schema = StructType([
     StructField("timestamp",         StringType()),
@@ -64,7 +70,7 @@ raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_HOST) \
     .option("subscribe", "cybersecurity-logs") \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", STARTING_OFFSETS) \
     .option("maxOffsetsPerTrigger", 1000) \
     .option("failOnDataLoss", "false") \
     .option("kafka.request.timeout.ms", "120000") \
@@ -119,7 +125,7 @@ def write_to_cassandra(batch_df, batch_id):
 query = attacks.writeStream \
     .outputMode("append") \
     .foreachBatch(write_to_cassandra) \
-    .option("checkpointLocation", "/home/jovyan/work/streaming/chkpt_signatures") \
+    .option("checkpointLocation", CHECKPOINT_LOCATION) \
     .trigger(processingTime="15 seconds") \
     .start()
 

@@ -5,12 +5,18 @@ from pyspark.sql.types import StructType, StringType, LongType
 from datetime import datetime
 from collections import defaultdict
 import time
+import os
 
 KAFKA_BROKER    = "100.73.216.115:9092"
 CASSANDRA_HOST  = "100.97.208.110"
 TOPIC           = "cybersecurity-logs"
 THRESHOLD_BYTES = 2720 * 1024   # 2720 KB — 50% of top IP rate (5440 KB/10s estimated from 6M-message sample)
 WINDOW_SECONDS  = 10
+STARTING_OFFSETS = os.getenv("RAPID_STARTING_OFFSETS", "earliest")
+CHECKPOINT_LOCATION = os.getenv(
+    "RAPID_VOLUME_CHECKPOINT",
+    "/tmp/rapid_streaming/volume_alerts"
+)
 
 spark = SparkSession.builder \
     .appName("Task5_VolumeDetection") \
@@ -39,7 +45,7 @@ raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BROKER) \
     .option("subscribe", TOPIC) \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", STARTING_OFFSETS) \
     .option("maxOffsetsPerTrigger", 50000) \
     .option("failOnDataLoss", "false") \
     .load()
@@ -124,6 +130,7 @@ if __name__ == "__main__":
     query = parsed.writeStream \
         .foreachBatch(write_volume_alerts) \
         .outputMode("append") \
+        .option("checkpointLocation", CHECKPOINT_LOCATION) \
         .trigger(processingTime="10 seconds") \
         .start()
 

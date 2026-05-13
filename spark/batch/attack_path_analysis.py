@@ -9,6 +9,7 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType, LongType
+from pyspark.sql.window import Window
 
 # ── IPs Tailscale ─────────────────────────────────────────────────────────────
 ANASS_IP = os.getenv("ANASS_IP", "100.73.216.115")
@@ -130,17 +131,28 @@ top_ips_per_attack = (
     .filter(F.col("attack_type") != "Unknown")
     .groupBy("attack_type", "source_ip")
     .agg(F.count("*").alias("hits"))
-    .withColumn(
-        "rank",
-        F.row_number().over(
-            __import__("pyspark.sql.window", fromlist=["Window"])
-            .Window.partitionBy("attack_type").orderBy(F.col("hits").desc())
-        )
-    )
+    .withColumn("rank", F.row_number().over(Window.partitionBy("attack_type").orderBy(F.col("hits").desc())))
     .filter(F.col("rank") <= 5)
     .orderBy("attack_type", "rank")
 )
 top_ips_per_attack.show(50, truncate=False)
+
+top_ips_for_hbase = (
+    top_ips_per_attack
+    .groupBy("attack_type")
+    .agg(
+        F.concat_ws(
+            ", ",
+            F.collect_list(F.concat(F.col("source_ip"), F.lit(" ("), F.col("hits").cast("string"), F.lit(")")))
+        ).alias("top_source_ips")
+    )
+)
+
+attack_summary_for_hbase = (
+    attack_summary
+    .join(top_ips_for_hbase, "attack_type", "left")
+    .fillna({"top_source_ips": ""})
+)
 
 # ── 8. Sauvegarde Parquet (HDFS) ──────────────────────────────────────────────
 print(f"\n>>> Saving Parquet to: {HDFS_OUT}")
@@ -159,13 +171,14 @@ print(f"\n>>> Writing attack_patterns to HBase @ {CHAWI_IP}:9090 ...")
 
 try:
     import happybase
-    rows = attack_summary.collect()
+    rows = attack_summary_for_hbase.collect()
     print(f">>> Writing {len(rows)} rows to HBase...")
     for row in rows:
         # FIX: nouvelle connexion par row pour éviter le timeout Thrift
         conn = happybase.Connection(CHAWI_IP, port=9090)
         tbl  = conn.table('attack_patterns')
         rk   = f"{row['attack_type']}|{row['threat_label']}"
+        top_source_ips = str(row['top_source_ips'] or "")
         tbl.put(rk.encode(), {
             b'cf:attack_type':  str(row['attack_type']).encode(),
             b'cf:threat_label': str(row['threat_label']).encode(),
@@ -173,10 +186,11 @@ try:
             b'cf:avg_bytes':    str(row['avg_bytes']).encode(),
             b'cf:total_bytes':  str(row['total_bytes']).encode(),
             b'cf:distinct_ips': str(row['distinct_ips']).encode(),
+            b'cf:top_source_ips': top_source_ips.encode(),
             b'cf:last_seen':    str(row['last_seen']).encode(),
         })
         conn.close()
-        print(f"    Written: {rk}")
+        print(f"    Written: {rk} | top_source_ips={top_source_ips or 'NONE'}")
     print(">>> attack_patterns HBase done!")
 except Exception as e:
     print(f">>> HBase write failed: {e}")

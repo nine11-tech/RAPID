@@ -29,7 +29,6 @@
       <div class="logo-sub">HBase Batch Intelligence Layer · Historical Analysis</div>
       <div class="nav-links" style="margin-left: 2rem; display: inline-block;">
         <a href="dashboard.html" class="btn btn-primary" style="background: rgba(0, 229, 255, 0.1); color: #00e5ff; border-color: #00e5ff; text-decoration: none; padding: 4px 10px; border-radius: 4px;">
-          <span class="nav-icon">⚡</span>
           Real-time
         </a>
       </div>
@@ -49,7 +48,6 @@
         <span class="status-label" id="status-api">Connecting…</span>
       </div>
       <div class="hbase-badge">
-        <span class="hbase-icon">⬡</span>
         HBase
       </div>
       <div class="clock" id="clock">--:--:--</div>
@@ -64,7 +62,7 @@
   <div class="error-banner" id="error-banner" hidden>
     <span class="err-icon">⚠</span>
     <span id="error-msg">API unreachable — retrying…</span>
-    <button onclick="document.getElementById('error-banner').hidden=true">✕</button>
+    <button id="error-dismiss" type="button" aria-label="Dismiss API warning" onclick="this.closest('#error-banner').style.display='none'; this.closest('#error-banner').hidden=true; window.errorDismissed=true;">✕</button>
   </div>
 
   <!-- Controls Bar -->
@@ -94,7 +92,6 @@
     <div class="modal-content">
       <div class="modal-header">
         <div class="modal-title-group">
-          <span class="modal-icon">⬡</span>
           <h3 id="modal-ip">HBase IP Details</h3>
         </div>
         <button onclick="closeModal()" class="modal-close">×</button>
@@ -102,11 +99,11 @@
       <div class="modal-body">
         <div class="detail-grid">
           <div class="detail-card">
-            <div class="detail-label">Reputation Score</div>
+            <div class="detail-label">Decision Score</div>
             <div id="modal-rep-score" class="detail-value">—</div>
           </div>
           <div class="detail-card">
-            <div class="detail-label">Total Attacks</div>
+            <div class="detail-label">Evidence Count</div>
             <div id="modal-total-attacks" class="detail-value">—</div>
           </div>
           <div class="detail-card">
@@ -130,35 +127,62 @@
     </div>
   </div>
 
+  <!-- KPI Summary Modal -->
+  <div id="kpi-modal" class="modal" hidden>
+    <div class="modal-content kpi-modal-content">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="kpi-modal-title">Summary</h3>
+        </div>
+        <button onclick="closeKpiModal()" class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="kpi-modal-hero">
+          <div>
+            <div class="kpi-modal-label" id="kpi-modal-label">Metric</div>
+            <div class="kpi-modal-value" id="kpi-modal-value">—</div>
+          </div>
+          <span class="badge" id="kpi-modal-badge">SUMMARY</span>
+        </div>
+        <div class="kpi-modal-section">
+          <div class="section-label">What this means</div>
+          <p id="kpi-modal-meaning" class="kpi-modal-copy">—</p>
+        </div>
+        <div class="kpi-modal-section">
+          <div class="section-label">Recommended decision</div>
+          <p id="kpi-modal-decision" class="kpi-modal-copy">—</p>
+        </div>
+        <div class="kpi-modal-section">
+          <div class="section-label">Evidence</div>
+          <div id="kpi-modal-evidence" class="kpi-evidence-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- KPI strip -->
   <section class="kpi-strip container">
     <div class="kpi-card" id="kpi-patterns">
-      <div class="kpi-icon">◈</div>
       <div class="kpi-value" id="kpi-patterns-val">—</div>
       <div class="kpi-label">Attack Patterns</div>
     </div>
     <div class="kpi-card kpi-accent" id="kpi-reputation">
-      <div class="kpi-icon">⬡</div>
       <div class="kpi-value" id="kpi-reputation-val">—</div>
       <div class="kpi-label">Flagged IPs</div>
     </div>
     <div class="kpi-card kpi-warn" id="kpi-portscans">
-      <div class="kpi-icon">⊡</div>
       <div class="kpi-value" id="kpi-portscans-val">—</div>
       <div class="kpi-label">Port Scan Events</div>
     </div>
     <div class="kpi-card kpi-danger" id="kpi-multistep">
-      <div class="kpi-icon">⋯</div>
       <div class="kpi-value" id="kpi-multistep-val">—</div>
       <div class="kpi-label">Multi-Step Attacks</div>
     </div>
     <div class="kpi-card" id="kpi-volume">
-      <div class="kpi-icon">▲</div>
       <div class="kpi-value" id="kpi-volume-val">—</div>
       <div class="kpi-label">Threat Volume</div>
     </div>
     <div class="kpi-card" id="kpi-tables">
-      <div class="kpi-icon">⬡</div>
       <div class="kpi-value" id="kpi-tables-val">—</div>
       <div class="kpi-label">HBase Tables</div>
     </div>
@@ -173,7 +197,6 @@
     <section class="card card-wide">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Batch Threat Timeline
         </div>
         <div class="card-meta" id="timeline-meta">—</div>
@@ -181,13 +204,13 @@
       <div class="chart-wrap">
         <canvas id="chartTimeline"></canvas>
       </div>
+      <div class="chart-summary" id="timeline-summary"></div>
     </section>
 
     <!-- Threat Volume -->
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Threat Volume
         </div>
         <div class="card-meta" id="volume-meta">—</div>
@@ -195,13 +218,13 @@
       <div class="chart-wrap chart-small">
         <canvas id="chartVolume"></canvas>
       </div>
+      <div class="chart-summary" id="volume-summary"></div>
     </section>
 
     <!-- Attack Pattern Distribution -->
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Attack Pattern Types
         </div>
         <div class="card-meta" id="patterns-chart-meta">—</div>
@@ -209,13 +232,13 @@
       <div class="chart-wrap chart-small">
         <canvas id="chartPatterns"></canvas>
       </div>
+      <div class="chart-summary" id="patterns-summary"></div>
     </section>
 
     <!-- Top Port Scans -->
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⊡</span>
           Top Port Scan Sources
         </div>
         <div class="card-meta" id="top-ports-meta">—</div>
@@ -236,7 +259,6 @@
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⬡</span>
           IP Reputation Ranking
         </div>
         <div class="card-meta" id="rep-meta">—</div>
@@ -244,7 +266,7 @@
       <div class="table-wrap table-compact">
         <table class="batch-table">
           <thead>
-            <tr><th>#</th><th>IP</th><th>Score</th><th>Risk</th></tr>
+            <tr><th>#</th><th>IP</th><th>Decision Score</th><th>Risk</th></tr>
           </thead>
           <tbody id="reputation-body">
             <tr><td colspan="4" class="table-empty">Loading…</td></tr>
@@ -262,7 +284,6 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">◈</span>
           Batch Attack Patterns
         </div>
         <div class="card-meta" id="patterns-full-meta">—</div>
@@ -272,10 +293,10 @@
           <thead>
             <tr>
               <th>#</th>
-              <th>Source IP</th>
+              <th>Source IPs</th>
               <th>Pattern Type</th>
-              <th>Count</th>
-              <th>Score</th>
+              <th>Detected Events</th>
+              <th>Decision Score</th>
               <th>Severity</th>
               <th>Last Seen</th>
               <th>Action</th>
@@ -297,7 +318,6 @@
     <section class="card card-wide">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⬡</span>
           IP Reputation Scores — HBase
         </div>
         <div class="card-meta" id="rep-chart-meta">—</div>
@@ -310,7 +330,6 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⬡</span>
           Full Reputation Table
         </div>
         <div class="card-meta" id="rep-table-meta">—</div>
@@ -321,7 +340,7 @@
             <tr>
               <th>#</th>
               <th>IP Address</th>
-              <th>Reputation Score</th>
+              <th>Decision Score</th>
               <th>Attack Count</th>
               <th>Risk Level</th>
               <th>Last Activity</th>
@@ -345,8 +364,7 @@
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⊡</span>
-          Top Port Scan IPs
+          Top Port Scan Sources
         </div>
         <div class="card-meta" id="top-portscan-meta">—</div>
       </div>
@@ -358,8 +376,7 @@
     <section class="card card-half">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⊡</span>
-          Port Scan Activity
+          High-Risk Raw Scan Records
         </div>
         <div class="card-meta" id="portscans-list-meta">—</div>
       </div>
@@ -371,8 +388,7 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⊡</span>
-          Port Scan Records
+          Raw Port Scan Records
         </div>
         <div class="card-meta" id="portscans-table-meta">—</div>
       </div>
@@ -406,10 +422,9 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⋯</span>
           Multi-Step Attack Chains — HBase
         </div>
-        <div class="live-badge">⬡ BATCH</div>
+        <div class="live-badge">BATCH</div>
         <div class="card-meta" id="multistep-meta">—</div>
       </div>
       <div id="multistep-chains" class="chains-container">
@@ -420,7 +435,6 @@
     <section class="card card-full">
       <div class="card-header">
         <div class="card-title">
-          <span class="card-icon">⋯</span>
           Multi-Step Attack Table
         </div>
       </div>
@@ -432,7 +446,7 @@
               <th>Source IP</th>
               <th>Steps</th>
               <th>Pattern</th>
-              <th>Total Score</th>
+              <th>Decision Score</th>
               <th>Duration</th>
               <th>Action</th>
             </tr>

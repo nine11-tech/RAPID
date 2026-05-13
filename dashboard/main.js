@@ -19,6 +19,7 @@ const CHART_COLOR = {
 let isPolling = true;
 let pollInterval = null;
 let consecutiveErrors = 0;
+let errorDismissed = false;
 let currentData = { top10: [], timeline: [], protocol: {}, volume: [], signatures: [] };
 
 // ── Severity helper ─────────────────────────────────────────
@@ -47,6 +48,7 @@ function setStatus(online) {
 
 // ── Error banner ────────────────────────────────────────────
 function showError(msg) {
+  if (errorDismissed || window.errorDismissed) return;
   const banner = document.getElementById('error-banner');
   document.getElementById('error-msg').textContent = msg;
   banner.hidden = false;
@@ -320,7 +322,9 @@ function updateTop10Chart(data) {
   chartTop10.update('active');
 
   document.getElementById('top10-meta').textContent =
-    `${data.length} IPs · updated ${new Date().toLocaleTimeString('en-GB')}`;
+    data.length
+      ? `${data.length} IPs · updated ${new Date().toLocaleTimeString('en-GB')}`
+      : 'No threat_scores rows returned by the speed layer';
 }
 
 // ── Timeline Line Chart ──────────────────────────────────────
@@ -401,7 +405,9 @@ function updateTimelineChart(data) {
   chartTimeline.update('active');
 
   document.getElementById('timeline-meta').textContent =
-    `${data.length} intervals · updated ${new Date().toLocaleTimeString('en-GB')}`;
+    data.length
+      ? `${data.length} intervals · updated ${new Date().toLocaleTimeString('en-GB')}`
+      : 'No logs rows returned by the speed layer';
 }
 
 // ── Protocol Doughnut Chart ─────────────────────────────────
@@ -454,7 +460,14 @@ function initProtocolChart() {
 }
 
 function updateProtocolChart(data) {
-  if (!data || Object.keys(data).length === 0) return;
+  if (!data || Object.keys(data).length === 0) {
+    chartProtocol.data.labels = [];
+    chartProtocol.data.datasets[0].data = [];
+    chartProtocol.update('active');
+    document.getElementById('protocol-meta').textContent =
+      'No protocol data because logs is empty';
+    return;
+  }
   
   const labels = Object.keys(data);
   const values = labels.map(proto => {
@@ -638,13 +651,13 @@ function tmAddFeed(a, fresh) {
       <span class="tm-fi-type" style="color:${color}">${a.attack_type || 'Unknown'}</span>
       <span class="tm-fi-time">${tmFmtTime(a.timestamp)}</span>
     </div>
-    <div class="tm-fi-route">${a.source_city || a.source_country || '?'} ──▶ ${a.target_city || a.target_country || '?'}</div>
+    <div class="tm-fi-route">${a.source_city || a.source_country || 'Unknown source'} ──▶ ${a.target_city || a.target_country || 'Unknown target'}</div>
     <div class="tm-fi-tags">
       <span class="tm-fi-tag ${stag}">${(a.severity || '?').toUpperCase()}</span>
-      <span class="tm-fi-tag">${a.protocol || '?'}</span>
-      <span class="tm-fi-tag">${a.source_country_code || '?'}</span>
+      <span class="tm-fi-tag">${a.protocol || 'Unknown protocol'}</span>
+      <span class="tm-fi-tag">${a.source_country_code || 'Unknown country'}</span>
     </div>
-    <div class="tm-fi-ip">${a.source_ip || '?'} ──▶ ${a.target_ip || '?'}</div>`;
+    <div class="tm-fi-ip">${a.source_ip || 'Unknown source IP'} ──▶ ${a.target_ip || 'Unknown target IP'}</div>`;
   el.addEventListener('click', () => tmShowTip(a, el));
 
   const scroll = document.getElementById('tm-feed-scroll');
@@ -664,8 +677,8 @@ function tmShowTip(a, el) {
   document.getElementById('map-tip-title').style.color = color;
   document.getElementById('map-tip-title').textContent = a.attack_type || 'Attack';
   document.getElementById('map-tip-body').innerHTML = [
-    ['Source', `${a.source_city||'?'}, ${a.source_country||'?'}`],
-    ['Target', `${a.target_city||'?'}, ${a.target_country||'?'}`],
+    ['Source', `${a.source_city || 'Unknown city'}, ${a.source_country || 'Unknown country'}`],
+    ['Target', `${a.target_city || 'Unknown city'}, ${a.target_country || 'Unknown country'}`],
     ['Src IP', a.source_ip||'?'], ['Dst IP', a.target_ip||'?'],
     ['Severity', a.severity||'?'], ['Score', a.score??'?'],
     ['Protocol', a.protocol||'?'],
@@ -723,6 +736,8 @@ function updateVolumeTable(data) {
   const tbody = document.getElementById('volume-table-body');
   if (!data || data.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No volume alerts</td></tr>';
+    document.getElementById('volume-meta').textContent =
+      'No volume_alerts rows returned';
     return;
   }
   
@@ -773,7 +788,7 @@ function updateSignatureFeed(data) {
 function updateTable(data) {
   const tbody = document.getElementById('threat-table-body');
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No threat data available</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No threat_scores rows available. Check that threat_score.py is running and writing to Cassandra.</td></tr>';
     return;
   }
 
@@ -838,19 +853,48 @@ async function fetchWithTimeout(url, timeoutMs = 4000) {
   }
 }
 
+async function fetchEndpoint(name, url, transform, fallback) {
+  try {
+    const raw = await fetchWithTimeout(url);
+    return {
+      name,
+      ok: true,
+      data: transform(raw),
+      raw
+    };
+  } catch (err) {
+    return {
+      name,
+      ok: false,
+      data: fallback,
+      error: err
+    };
+  }
+}
+
 // ── Main Poll Loop ───────────────────────────────────────────
 async function poll() {
   if (!isPolling) return;
-  
+
+  const results = await Promise.all([
+    fetchEndpoint('top10', `${API_BASE}/threats/top10`, res => res.top10 || [], []),
+    fetchEndpoint('timeline', `${API_BASE}/threats/timeline`, res => res.timeline || [], []),
+    fetchEndpoint('protocol', `${API_BASE}/threats/by-protocol`, res => res.by_protocol || {}, {}),
+    fetchEndpoint('volume', `${API_BASE}/threats/volume-alerts`, res => res.volume_alerts || [], []),
+    fetchEndpoint('recent', `${API_BASE}/threats/recent`, res => res.recent || [], []),
+    fetchEndpoint('threshold', `${API_BASE}/threats/threshold`, res => res, { threshold: '—' })
+  ]);
+
+  const failures = results.filter(r => !r.ok);
+  const values = Object.fromEntries(results.map(r => [r.name, r.data]));
+
   try {
-    const [top10Data, timelineData, protocolData, volumeData, signatureData, thresholdData] = await Promise.all([
-      fetchWithTimeout(`${API_BASE}/threats/top10`).then(res => res.top10 || []),
-      fetchWithTimeout(`${API_BASE}/threats/timeline`).then(res => res.timeline || []),
-      fetchWithTimeout(`${API_BASE}/threats/by-protocol`).then(res => res.by_protocol || {}),
-      fetchWithTimeout(`${API_BASE}/threats/volume-alerts`).then(res => res.volume_alerts || []),
-      fetchWithTimeout(`${API_BASE}/threats/recent`).then(res => res.recent || []),
-      fetchWithTimeout(`${API_BASE}/threats/threshold`)
-    ]);
+    const top10Data = values.top10;
+    const timelineData = values.timeline;
+    const protocolData = values.protocol;
+    const volumeData = values.volume;
+    const signatureData = values.recent;
+    const thresholdData = values.threshold;
 
     // Store current data for export
     currentData = {
@@ -863,9 +907,14 @@ async function poll() {
       exported_at: new Date().toISOString()
     };
 
-    consecutiveErrors = 0;
-    setStatus(true);
-    hideError();
+    setStatus(failures.length < results.length);
+    if (failures.length) {
+      consecutiveErrors++;
+      showError(`Partial speed API issue: ${failures.map(r => r.name).join(', ')}`);
+    } else {
+      consecutiveErrors = 0;
+      hideError();
+    }
 
     updateTop10Chart(top10Data);
     updateTimelineChart(timelineData);

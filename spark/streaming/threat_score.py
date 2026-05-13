@@ -2,19 +2,20 @@
 """
 RAPID Sprint 2 - Task 6 (Chawi)
 Score de menace composite par IP en temps reel
-bf*2 + sig*5 + vol*2 = score (0-100)
+bf*2 + malicious*5 + suspicious*2 + vol*2 = score (0-100)
 Table: cybersecurity.threat_scores
 """
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     from_json, col, sum as _sum, count as _count, window, when,
-    to_timestamp, lit
+    to_timestamp, lit, least, date_format
 )
 from pyspark.sql.types import (
     StructType, StringType, LongType, IntegerType
 )
 from datetime import datetime
+import os
 
 # ── Config ────────────────────────────────────────────
 KAFKA_HOST     = "100.73.216.115:9092"
@@ -22,6 +23,11 @@ CASSANDRA_HOST = "100.97.208.110"
 TOPIC          = "cybersecurity-logs"
 WINDOW_SIZE    = "30 seconds"
 SLIDE_SIZE     = "10 seconds"
+STARTING_OFFSETS = os.getenv("RAPID_STARTING_OFFSETS", "earliest")
+CHECKPOINT_LOCATION = os.getenv(
+    "RAPID_THREAT_SCORE_CHECKPOINT",
+    "/tmp/rapid_streaming/threat_scores"
+)
 
 # ── Schema ────────────────────────────────────────────
 schema = StructType() \
@@ -56,7 +62,7 @@ raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_HOST) \
     .option("subscribe", TOPIC) \
-    .option("startingOffsets", "latest") \
+    .option("startingOffsets", STARTING_OFFSETS) \
     .option("maxOffsetsPerTrigger", 1000) \
     .option("failOnDataLoss", "false") \
     .option("kafka.request.timeout.ms", "120000") \
@@ -109,10 +115,25 @@ def write_threat_scores(batch_df, batch_id):
         print(f">>> Batch {batch_id}: no threats scored")
         return
 
-    print(f"\n>>> THREAT SCORES — Batch {batch_id}: {count_val} IPs scored")
-    batch_df.show(truncate=False)
+    scored_df = batch_df \
+        .withColumn(
+            "score",
+            least(
+                lit(100),
+                (
+                    (col("bf_count") * 2) +
+                    (col("malicious_count") * 5) +
+                    (col("suspicious_count") * 2) +
+                    (col("volume_mb").cast("int") * 2)
+                )
+            ).cast("int")
+        ) \
+        .withColumn("last_seen", date_format(col("window.end"), "yyyy-MM-dd HH:mm:ss"))
 
-    rows = batch_df.collect()
+    print(f"\n>>> THREAT SCORES — Batch {batch_id}: {count_val} IPs scored")
+    scored_df.show(truncate=False)
+
+    rows = scored_df.collect()
 
     for row in rows:
         source_ip        = row["source_ip"]
@@ -121,8 +142,8 @@ def write_threat_scores(batch_df, batch_id):
         malicious_count  = int(row["malicious_count"]  or 0)
         bf_count         = int(row["bf_count"]         or 0)
         vol              = float(row["volume_mb"]       or 0)
-        last_seen        = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        score            = min(100, (bf_count * 2) + (malicious_count * 5) + (int(vol) * 2))
+        last_seen        = row["last_seen"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        score            = int(row["score"] or 0)
 
         level = "CRITICAL" if score >= 80 else \
                 "HIGH" if score >= 60 else \
@@ -132,13 +153,13 @@ def write_threat_scores(batch_df, batch_id):
         print(f"🎯 {source_ip:<20} | TOT:{total_events:4} SUS:{suspicious_count:3} MAL:{malicious_count:3} | SCORE:{score:3} [{level}] | {last_seen}")
 
     # Write to Cassandra
-    cassandra_df = batch_df.select(
+    cassandra_df = scored_df.select(
         col("source_ip"),
-        lit(score).cast("int").alias("score"),
+        col("score").cast("int"),
         col("total_events").cast("int"),
         col("suspicious_count").cast("int"),
         col("malicious_count").cast("int"),
-        lit(last_seen).alias("last_seen")
+        col("last_seen")
     )
 
     try:
@@ -155,11 +176,11 @@ def write_threat_scores(batch_df, batch_id):
 query = aggregated.writeStream \
     .outputMode("update") \
     .foreachBatch(write_threat_scores) \
-    .option("checkpointLocation", "/home/jovyan/work/streaming/chkpt_threat") \
+    .option("checkpointLocation", CHECKPOINT_LOCATION) \
     .trigger(processingTime="30 seconds") \
     .start()
 
 print(">>> Stream started — scoring IPs in real time...")
-print(">>> Formula: bf*2 + malicious*5 + vol*2 (max 100)")
+print(">>> Formula: bf*2 + malicious*5 + suspicious*2 + vol*2 (max 100)")
 print(">>> Ctrl+C to stop\n")
 query.awaitTermination()

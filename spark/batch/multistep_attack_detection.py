@@ -54,6 +54,9 @@ stats = df.groupBy("source_ip").agg(
 )
 
 result = multistep_ips.join(stats, "source_ip") \
+    .withColumn("attack_chain", F.lit("ToolScan -> SQLi -> PathTraversal")) \
+    .withColumn("ordered_steps", F.array(F.lit("ToolScan"), F.lit("SQLi"), F.lit("PathTraversal"))) \
+    .withColumn("step_count", F.lit(3)) \
     .withColumn(
         "risk_level",
         F.when(F.col("malicious_count") > 100, "CRITICAL")
@@ -90,6 +93,9 @@ def write_multistep_hbase(rows):
             tbl.put(rk.encode(), {
                 b'cf:total_events':    str(row['total_events']).encode(),
                 b'cf:attack_types':    str(row['attack_types']).encode(),
+                b'cf:attack_chain':    str(row['attack_chain']).encode(),
+                b'cf:ordered_steps':   str(row['ordered_steps']).encode(),
+                b'cf:step_count':      str(row['step_count']).encode(),
                 b'cf:sqli_hits':       str(row['sqli_hits']).encode(),
                 b'cf:traversal_hits':  str(row['traversal_hits']).encode(),
                 b'cf:tool_hits':       str(row['tool_hits']).encode(),
