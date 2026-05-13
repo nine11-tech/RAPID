@@ -1,0 +1,34 @@
+\begin{abstract}
+    \noindent
+    This report presents the design and implementation of a real-time cybersecurity 
+    threat detection system built on the \textbf{Lambda Architecture}. As cyber threats 
+    grow increasingly sophisticated and voluminous, traditional batch-only approaches 
+    are no longer sufficient to protect modern networked environments. Our system 
+    addresses this challenge by combining historical batch analysis with low-latency 
+    stream processing, enabling both deep forensic insight and near-instantaneous 
+    threat alerting.
+
+    \vspace{1em}
+    The architecture leverages a curated pipeline of industry-proven Big Data 
+    technologies: 
+    \begin{itemize}
+        \item \textbf{Apache Kafka} for log ingestion
+        \item \textbf{Apache Spark} for both batch and streaming analytics
+        \item \textbf{HDFS} for distributed historical storage
+        \item \textbf{HBase} for batch view serving
+        \item \textbf{Apache Cassandra} for real-time threat storage
+        \item A \textbf{Flask REST API} with an HTML/JS dashboard for unified threat visualization
+    \end{itemize}
+
+    The system successfully detects multiple categories of network threats — including 
+    brute-force attacks, SQL injection attempts, port scanning activity, and abnormal 
+    data exfiltration — with end-to-end alert latency below five seconds. A bonus 
+    \textbf{Random Forest} classifier, trained with MLlib on labeled log data, achieved 
+    \textbf{92\% classification accuracy}, with critical class-imbalance insights 
+    uncovered through DuckDB analysis.
+
+    \vspace{1em}
+    This project demonstrates how a well-architected Big Data pipeline can serve as 
+    the backbone of a production-grade cybersecurity monitoring platform, balancing 
+    throughput, fault tolerance, and real-time responsiveness.
+\end{abstract}

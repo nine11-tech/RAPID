@@ -1,0 +1,173 @@
+\section{Introduction}
+\label{sec:introduction}
+
+\subsection{Context and Motivation}
+
+The proliferation of networked systems, cloud infrastructure, and IoT devices has dramatically expanded the attack surface available to malicious actors. According to the \textbf{OWASP Top 10}, the most critical web application security risks — including injection attacks, broken authentication, and security misconfigurations — are not only persistent but increasingly automated. Modern adversaries deploy botnets, scripted scanners, and exploit frameworks that can probe thousands of systems per minute, generating massive volumes of network log data in the process.
+
+\vspace{1em}
+Traditional Security Information and Event Management (SIEM) systems struggle with this scale. Rule-based engines applied to batch log analysis introduce unacceptable detection delays; by the time a threat is identified, lateral movement may already be underway. A new paradigm is required: one that combines the \emph{depth} of historical analysis with the \emph{speed} of real-time stream processing.
+
+\subsection{Project Objectives}
+
+This project aims to design and implement a complete cybersecurity threat detection platform that fulfills the following objectives:
+
+\begin{itemize}
+    \item \textbf{Ingest and store} network log data at scale using a distributed filesystem (HDFS) and a streaming message broker (Apache Kafka).
+    \item \textbf{Detect historical attack patterns} through batch analysis with Apache Spark, including top malicious IPs, port scan detection, and SQLi/XSS signature extraction.
+    \item \textbf{Alert on active threats in real time} via Spark Streaming, with detection rules aligned to OWASP and Sigma rule standards.
+    \item \textbf{Serve unified threat intelligence} through a REST API that merges batch and speed layer results for any queried IP address.
+    \item \textbf{Visualize} both historical trends and live threats through an interactive dashboard.
+\end{itemize}
+
+\subsection{Threat Model and Detection Scope}
+
+The system targets the following attack categories, drawn from OWASP Top 10 and common Sigma detection rules:
+
+\subsection{Report Structure}
+
+The remainder of this report is organized as follows:
+\section{System Architecture}
+\label{sec:architecture}
+
+The \textbf{RAPID} platform is built on the \textbf{Lambda Architecture}, which divides the system into three layers: batch, speed, and serving. This design is ideal for processing large volumes of data with both historical analysis and real-time capabilities. 
+
+\subsection{Lambda Architecture Overview}
+
+The \textbf{batch layer} is responsible for processing historical data, performing complex computations, and storing the results in a distributed file system such as \textbf{HDFS}. It produces views that are updated periodically. The \textbf{speed layer} handles real-time data processing, ensuring immediate alerting when anomalies are detected. The \textbf{serving layer} unifies the batch and speed layers, providing an interface for querying both historical and real-time data.
+
+\subsection{Technology Choices}
+The system employs several key technologies:
+
+- \textbf{Apache Kafka}: For stream processing and message brokering, Kafka ingests large volumes of log data in real-time.
+- \textbf{Apache Spark}: Used for both batch processing and real-time streaming. The batch layer processes historical logs, while the speed layer handles live data.
+- \textbf{HDFS (Hadoop Distributed File System)}: For storing large volumes of data in a fault-tolerant and scalable manner.
+- \textbf{HBase}: A NoSQL database used for batch-serving the results, allowing for fast read and write operations.
+- \textbf{Apache Cassandra}: Handles real-time threat data storage, with low-latency writes and fault tolerance.
+- \textbf{Flask REST API}: Provides a unified API for querying both the batch and real-time threat data.
+
+
+
+
+% Contenu de la section Batch Layer
+\section{Batch Layer}
+\label{sec:batch}
+
+The \textbf{batch layer} in the Lambda Architecture processes and stores large volumes of historical data. The system ingests log data into \textbf{HDFS}, where Apache Spark performs batch processing to extract useful threat intelligence.
+
+\subsection{Data Storage in HDFS}
+
+Log data is partitioned by date in HDFS, which allows for efficient querying and computation. Apache Spark processes these logs to identify the top malicious IPs, detect port scans, and extract attack signatures such as SQL injections and Cross-Site Scripting (XSS).
+
+\subsection{Processing with Apache Spark}
+
+The batch layer uses Apache Spark jobs to analyze large datasets:
+
+- **Malicious IP Detection**: Spark scans logs for abnormal connection patterns, identifying IP addresses responsible for suspicious activities.
+- **Port Scan Detection**: It flags any IP that attempts to establish connections to more than 20 distinct ports in a short time window, which indicates a port scan attack.
+- **SQL Injection and XSS Detection**: Regular expressions are applied to the \texttt{request\_path} fields to identify typical SQL injection and XSS payloads.
+
+The results of these analyses are stored in \textbf{HBase} tables, including \texttt{ip\_reputation}, \texttt{attack\_patterns}, and \texttt{threat\_timeline}.
+
+
+
+% Contenu de la section Speed Layer
+\section{Speed Layer}
+\label{sec:speed}
+
+The \textbf{speed layer} is designed to handle real-time data streams. As new log data arrives, it is processed immediately to provide instant threat detection and alerting. This layer ensures that threats are identified as they occur, with minimal latency.
+
+\subsection{Real-Time Data Ingestion with Kafka}
+
+Apache Kafka is used for real-time data ingestion. It streams log data to the system, where it is processed in real-time using \textbf{Spark Structured Streaming}. This allows for sub-second latency in detecting threats.
+
+\subsection{Threat Detection in Real-Time}
+
+The speed layer performs various real-time detection tasks:
+
+- **Brute-Force Attack Detection**: The system detects login attempts from the same IP within a short time window. If more than five failed attempts are made within one minute, an alert is triggered.
+- **Known Attack Signature Detection**: The system looks for signatures from known attack tools (e.g., \texttt{sqlmap}, \texttt{nikto}) or suspicious SQL payloads in the \texttt{request\_path}.
+- **Abnormal Data Volume Detection**: It detects large volumes of data being transferred within short periods, which may indicate data exfiltration.
+
+These detections trigger immediate alerts and are stored in \textbf{Apache Cassandra} for fast retrieval.
+
+
+
+% Contenu de la section Serving Layer
+\section{Serving Layer}
+\label{sec:serving}
+
+The \textbf{serving layer} serves as the interface for querying both historical and real-time threat data. It combines results from the batch and speed layers, making them accessible through a single API endpoint.
+
+\subsection{Flask REST API}
+
+The system uses a \textbf{Flask REST API} to provide access to both historical and live data. This API aggregates results from the batch layer (stored in HBase) and the speed layer (stored in Cassandra) to provide a unified view of threats.
+
+\subsection{Dashboard for Visualization}
+
+An interactive dashboard built with HTML and JavaScript displays real-time and historical data. Users can query the API to visualize:
+
+- The top malicious IPs detected in the past day.
+- Port scan activities over the last week.
+- Abnormal data exfiltration events in the past hour.
+
+The dashboard is designed to give cybersecurity analysts a comprehensive view of ongoing and past threats.
+
+
+
+% Contenu de la section Bonus Features
+\section{Bonus Features: Machine Learning}
+\label{sec:bonus}
+
+A bonus feature of the system is the incorporation of a \textbf{Random Forest} classifier for threat classification. This machine learning model, trained using \textbf{Spark MLlib}, predicts the threat label for each log entry based on historical data.
+
+\subsection{Model Training and Performance}
+
+The Random Forest model is trained on labeled log data with three possible threat labels: \textit{benign}, \textit{suspicious}, and \textit{malicious}. The model achieved \textbf{92\% classification accuracy} on the \texttt{threat\_label} task.
+
+\subsection{Class Imbalance Analysis with DuckDB}
+
+The system uses \textbf{DuckDB} to analyze class imbalances in the dataset. This analysis reveals that the majority of log entries are labeled as \textit{benign}, while the minority are \textit{malicious} or \textit{suspicious}, which impacts the accuracy of the classifier on minority classes.
+
+
+
+% Contenu de la section Conclusion
+\section{Conclusion}
+\label{sec:conclusion}
+
+This project demonstrates the successful implementation of a \textbf{Lambda Architecture} for real-time cybersecurity threat detection. The system leverages industry-standard Big Data technologies such as \textbf{Apache Kafka}, \textbf{Apache Spark}, \textbf{HDFS}, and \textbf{Cassandra} to provide scalable, real-time, and historical threat analysis.
+
+\subsection{Key Achievements}
+
+The system meets all core objectives:
+
+- \textbf{Batch Layer}: Processes historical logs to detect malicious IPs, port scans, and SQLi/XSS patterns.
+- \textbf{Speed Layer}: Detects real-time threats such as brute-force attacks and abnormal data exfiltration.
+- \textbf{Serving Layer}: Provides a unified API and dashboard for querying both historical and real-time data.
+- \textbf{Bonus Feature}: Achieved 92\% accuracy in predicting threat labels using a Random Forest classifier.
+
+\subsection{Future Work}
+
+Several improvements could be made in the future:
+
+- Implementing techniques such as \textbf{SMOTE} to address class imbalance and improve model performance.
+- Extending the detection capabilities to include multi-step attacks.
+- Deploying the system on a cloud-based infrastructure to improve scalability and availability.
+
+This platform provides a strong foundation for a production-ready cybersecurity monitoring system that balances speed, accuracy, and scalability.
+
+\subsection{Dataset}
+
+The system was developed and validated against the \textbf{Cybersecurity Threat Detection Logs} dataset (available on Kaggle), which contains labeled network log entries with fields including \texttt{source\_ip}, \texttt{dest\_ip}, \texttt{protocol}, \texttt{action}, \texttt{threat\_label} (\textit{benign}, \textit{suspicious}, \textit{malicious}), \texttt{bytes\_transferred}, \texttt{user\_agent}, and \texttt{request\_path}. This rich, multi-field dataset provides a realistic basis for both rule-based and machine-learning-driven threat detection.
+
+\subsection{Report Structure}
+
+The remainder of this report is organized as follows:
+\begin{itemize}
+    \item Section~\ref{sec:architecture} describes the overall Lambda Architecture and technology choices.
+    \item Section~\ref{sec:batch} details the batch layer implementation.
+    \item Section~\ref{sec:speed} covers the real-time streaming pipeline.
+    \item Section~\ref{sec:serving} presents the serving layer and dashboard.
+    \item Section~\ref{sec:bonus} documents the machine learning bonus features.
+    \item Section~\ref{sec:conclusion} concludes with lessons learned and future directions.
+\end{itemize}
