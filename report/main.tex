@@ -1,0 +1,69 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{url}
+
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,shapes.geometric,calc}
+
+\geometry{margin=2.5cm}
+\onehalfspacing
+\setlist[itemize]{leftmargin=*,itemsep=0.25em}
+\setlist[enumerate]{leftmargin=*,itemsep=0.25em}
+
+\definecolor{rapidBlue}{HTML}{155EEF}
+\definecolor{rapidGreen}{HTML}{12B76A}
+\definecolor{rapidOrange}{HTML}{F79009}
+\definecolor{rapidRed}{HTML}{D92D20}
+\definecolor{rapidGray}{HTML}{667085}
+\definecolor{rapidLight}{HTML}{F2F4F7}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=rapidBlue,
+    citecolor=rapidBlue,
+    urlcolor=rapidBlue,
+    pdftitle={RAPID: Real-time Attack Pattern Identification and Detection},
+    pdfauthor={RAPID Team}
+}
+
+\title{\textbf{RAPID}\\Real-time Attack Pattern Identification and Detection}
+\author{RAPID Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\listoffigures
+\listoftables
+\clearpage
+
+\input{sections/00_abstract}
+\input{sections/01_introduction}
+\input{sections/02_architecture}
+\input{sections/03_batch_layer}
+\input{sections/04_speed_layer}
+\input{sections/05_serving_layer}
+\input{sections/06_bonus_features}
+\input{sections/07_conclusion}
+
+\clearpage
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

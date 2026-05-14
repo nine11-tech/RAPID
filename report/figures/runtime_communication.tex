@@ -1,0 +1,39 @@
+\begin{tikzpicture}[
+    font=\small,
+    lane/.style={draw, rounded corners=6pt, minimum width=16.2cm, minimum height=1.55cm, fill=white},
+    lanetitle/.style={font=\bfseries, align=left},
+    svc/.style={draw, rounded corners=4pt, align=center, text width=3.0cm, minimum height=0.92cm, fill=white},
+    arrow/.style={-{Latex[length=2.4mm]}, thick, shorten >=4pt, shorten <=4pt},
+    stream/.style={arrow, rapidOrange},
+    batch/.style={arrow, rapidBlue},
+    query/.style={arrow, rapidGreen}
+]
+
+% Streaming lane.
+\node[lane, fill=rapidOrange!8] at (0,2.25) {};
+\node[lanetitle, text=rapidOrange] at (-5.3,2.82) {Streaming path};
+\node[svc, fill=rapidOrange!12] (kafka) at (-5.3,2.10) {Anass\\Kafka broker};
+\node[svc, fill=rapidOrange!12] (streaming) at (0,2.10) {Khalid\\Spark streaming jobs};
+\node[svc, fill=rapidOrange!12] (cassWrite) at (5.3,2.10) {Chawi\\Cassandra views};
+\draw[stream] (kafka.east) -- (streaming.west);
+\draw[stream] (streaming.east) -- (cassWrite.west);
+
+% Batch lane.
+\node[lane, fill=rapidBlue!8] at (0,0.15) {};
+\node[lanetitle, text=rapidBlue] at (-5.3,0.72) {Batch path};
+\node[svc, fill=rapidBlue!10] (hdfs) at (-5.3,0.00) {Anass\\HDFS raw logs};
+\node[svc, fill=rapidBlue!10] (batchJobs) at (0,0.00) {Hamza\\Spark batch jobs};
+\node[svc, fill=rapidBlue!10] (hbase) at (5.3,0.00) {Chawi\\HBase views};
+\draw[batch] (hdfs.east) -- (batchJobs.west);
+\draw[batch] (batchJobs.east) -- (hbase.west);
+
+% Query lane.
+\node[lane, fill=rapidGreen!8] at (0,-1.95) {};
+\node[lanetitle, text=rapidGreen] at (-5.3,-1.38) {API query path};
+\node[svc, fill=rapidGreen!12] (dashboard) at (5.3,-2.10) {Chawi\\Dashboard};
+\node[svc, fill=rapidGreen!12] (stores) at (0,-2.10) {Cassandra and HBase\\serving reads};
+\node[svc, fill=rapidGreen!12] (api) at (-5.3,-2.10) {Anass\\Flask API};
+\draw[query] (dashboard.west) -- (stores.east);
+\draw[query] (stores.west) -- (api.east);
+
+\end{tikzpicture}

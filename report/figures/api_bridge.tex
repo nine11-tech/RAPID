@@ -1,0 +1,31 @@
+\begin{tikzpicture}[
+    font=\small,
+    box/.style={draw, rounded corners=3pt, align=center, minimum height=0.95cm, text width=3.35cm, fill=white},
+    db/.style={draw, cylinder, shape border rotate=90, aspect=0.23, align=center, minimum height=1.1cm, text width=3.05cm, fill=white},
+    arrow/.style={-{Latex[length=2.3mm]}, thick, shorten >=2pt, shorten <=2pt},
+    query/.style={arrow, rapidBlue},
+    result/.style={arrow, rapidGreen}
+]
+
+\node[box, fill=rapidLight] (client) at (0,0) {Dashboard, tests,\\or analyst client};
+\node[box, fill=rapidGreen!12] (flask) at (4.9,0) {Flask API\\\texttt{app.py}};
+
+\node[db, fill=rapidOrange!12] (cass) at (9.5,2.0) {Cassandra\\\texttt{logs}\\\texttt{threat\_scores}\\\texttt{realtime\_threats}\\\texttt{signature\_alerts}\\\texttt{volume\_alerts}};
+\node[db, fill=rapidBlue!10] (hbase) at (9.5,-2.0) {HBase\\\texttt{ip\_reputation}\\\texttt{attack\_patterns}\\\texttt{threat\_timeline}};
+
+\node[box, fill=rapidLight] (rt) at (13.8,2.0) {Recent state\\alerts, scores, windows};
+\node[box, fill=rapidLight] (hist) at (13.8,-2.0) {Historical context\\reputation and trends};
+\node[box, fill=rapidGreen!12] (decision) at (18.2,0) {Merged JSON\\score, level,\\recommendation};
+
+\draw[query] (client) -- (flask);
+\node[fill=white, inner sep=1.5pt, text=rapidBlue] at (2.45,0.47) {HTTP GET};
+\draw[query] (flask.east) -- ++(0.45,0) |- (cass.west);
+\draw[query] (flask.east) -- ++(0.45,0) |- (hbase.west);
+
+\draw[result] (cass) -- (rt);
+\draw[result] (hbase) -- (hist);
+\draw[result] (rt.east) -- ++(0.55,0) |- (decision.north);
+\draw[result] (hist.east) -- ++(0.55,0) |- (decision.south);
+\draw[result] (decision.south) |- ++(0,-3.25) -| node[pos=0.88, below, fill=white, inner sep=1.5pt]{JSON response} (client.south);
+
+\end{tikzpicture}
