@@ -31,6 +31,54 @@ The project therefore uses a distributed deployment where each machine owns a cl
     \label{fig:single-host-vs-distributed}
 \end{figure}
 
+\section{Scrum Planning and Sprint Backlog}
+
+The implementation was managed through a Scrum-style GitHub project board. The backlog was organized around the same technical layers used by the architecture: batch processing, speed processing, serving integration, visualization, documentation, and infrastructure. This helped the team avoid treating the system as one large undifferentiated task. Each card had an owner, a sprint, and a concrete deliverable, which made the distributed deployment easier to coordinate.
+
+
+\begin{table}[H]
+    \centering
+    \caption{Scrum backlog summary extracted from the project planning board.}
+    \label{tab:scrum-backlog-summary}
+    \begin{tabularx}{\textwidth}{>{\bfseries}l l X}
+        \toprule
+        Sprint & Main theme & Representative deliverables \\
+        \midrule
+        Sprint 1 & Batch layer and base infrastructure & Docker environment, partitioned HDFS layout, dataset loading, Spark batch analytics, Cassandra schema, HBase tables, and initial test scripts \\
+        Sprint 2 & Speed layer & Kafka topic validation, cross-node Cassandra access, CSV-to-Kafka replay producer, Spark Structured Streaming writers, brute-force detection, signature detection, abnormal-volume detection, and real-time threat scoring \\
+        Sprint 3 & Integration and delivery & Flask API endpoints, adaptive scoring, top-10 and timeline views, dashboard pages, end-to-end demonstration script, and technical report material \\
+        Sprint 4 & Bonus improvements & MLlib classification, model evaluation, multi-step attack correlation, GeoIP enrichment, and dashboard map visualization \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Figure~\ref{fig:scrum-board-sprint1} shows the first project-board view. Sprint 1 focused on making the base data platform work: setting up the Docker environment, loading and partitioning the dataset, creating HDFS and HBase structures, and implementing early Spark batch analytics. This sprint reduced the main technical risk because all later work depended on having a stable dataset and reproducible base services.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/board1.png}
+    \caption{GitHub project board for Sprint 1, focused on the batch layer and base infrastructure.}
+    \label{fig:scrum-board-sprint1}
+\end{figure}
+
+Figure~\ref{fig:scrum-board-sprint2} shows the second sprint. The board moves the work from offline computation to streaming: Kafka validation, real-time replay from CSV, Spark streaming jobs, Cassandra writes, and detectors for brute-force, signature, and volume-based threats. This sprint is also where cross-machine communication became essential because the streaming container, Kafka broker, and Cassandra service were not all on the same host.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/board2.png}
+    \caption{GitHub project board for Sprint 2, focused on Kafka, Spark Streaming, Cassandra writes, and real-time detectors.}
+    \label{fig:scrum-board-sprint2}
+\end{figure}
+
+Figure~\ref{fig:scrum-board-sprint3} shows the third sprint. The tasks shifted toward integration: API endpoints, adaptive scoring, dashboard pages, an end-to-end demo, and the written technical report. This sprint connected the individual layer outputs into a user-facing security monitoring workflow.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/board3.png}
+    \caption{GitHub project board for Sprint 3, focused on API integration, dashboard delivery, demonstration, and reporting.}
+    \label{fig:scrum-board-sprint3}
+\end{figure}
+
 \section{Tailscale and Docker Swarm Infrastructure}
 
 The deployment uses two complementary networking mechanisms. Tailscale provides the private network between physical machines. Docker Swarm provides the container-level overlay network. These two layers solve different problems and are both necessary.
@@ -53,6 +101,47 @@ The Compose profiles also enforce ownership. Anass starts only the \texttt{anass
     \caption{Infrastructure layers: Tailscale connects the physical machines, while Docker Swarm provides the shared container overlay network.}
     \label{fig:tailscale-swarm-layers}
 \end{figure}
+
+\subsection{Operational Verification from Docker Screenshots}
+
+The Docker Swarm deployment was verified from the command line by checking both node membership and running containers. Figure~\ref{fig:docker-node-status} shows that the machines were registered in the Swarm membership list. In that capture, some worker nodes appear as \texttt{Down}; this does not invalidate the deployment model, because student laptops can be temporarily offline, suspended, or disconnected from Tailscale when the manager runs \texttt{docker node ls}. For that reason, the stronger operational evidence is the per-machine \texttt{docker ps} output in Figures~\ref{fig:docker-ps-anass}--\ref{fig:docker-ps-chawi}, which shows the actual containers running on each owner machine.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/dockernode.png}
+    \caption{Docker Swarm node list on the manager machine. The list verifies node registration; temporary \texttt{Down} states reflect machine availability at screenshot time.}
+    \label{fig:docker-node-status}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/dockerps1.png}
+    \caption{Docker container status on Anass' machine, showing Kafka, Zookeeper, HDFS NameNode/DataNode, and the Flask API profile.}
+    \label{fig:docker-ps-anass}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/docker_ps_hamza.png}
+    \caption{Docker container status on Hamza's machine, showing the Spark master and Spark worker used for batch processing and Kafka replay work.}
+    \label{fig:docker-ps-hamza}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/docker_ps.png}
+    \caption{Docker container status on Khalid's machine, showing the single Spark streaming container used for real-time detection jobs.}
+    \label{fig:docker-ps-khalid}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/docker_ps_chawi.png}
+    \caption{Docker container status on Chawi's machine, showing Cassandra, HBase, and the Nginx dashboard container for the serving and visualization layer.}
+    \label{fig:docker-ps-chawi}
+\end{figure}
+
+Together, these screenshots support the architectural claim made in the backlog: every member does not need to run the full stack. Anass carries the infrastructure gateway services, Hamza carries Spark batch execution, Khalid carries the lightweight streaming runtime, and Chawi carries the serving databases and dashboard host. The distribution is especially important for machines with lower memory capacity, because Cassandra, HBase, and Spark should not all be forced onto the same laptop during the demonstration.
 
 \subsection{Runtime Communication}
 

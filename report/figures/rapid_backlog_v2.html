@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAPID — Backlog v2 · Docker Swarm Edition</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f5f5f3;color:#1a1a1a;padding:2rem;max-width:960px;margin:auto}
+h1{font-size:20px;font-weight:500;margin-bottom:4px}
+.meta{font-size:13px;color:#888;margin-bottom:1.5rem}
+.tabs{display:flex;gap:6px;margin-bottom:1.5rem;flex-wrap:wrap}
+.tab{padding:6px 16px;border-radius:8px;border:0.5px solid #ccc;font-size:13px;cursor:pointer;background:#fff;color:#666;transition:all .15s}
+.tab.active{background:#eee;color:#111;border-color:#999;font-weight:500}
+.panel{display:none}.panel.active{display:block}
+.sprint-header{display:flex;align-items:center;gap:12px;margin-bottom:1rem}
+.sprint-badge{padding:4px 12px;border-radius:8px;font-size:12px;font-weight:500}
+.s1{background:#EEEDFE;color:#3C3489}.s2{background:#E1F5EE;color:#085041}.s3{background:#FAEEDA;color:#633806}.s4{background:#E6F1FB;color:#0C447C}
+.sprint-title{font-size:16px;font-weight:500}
+.sprint-subtitle{font-size:12px;color:#888}
+.task-grid{display:flex;flex-direction:column;gap:8px;margin-bottom:1.5rem}
+.task{display:grid;grid-template-columns:24px 1fr auto auto;align-items:start;gap:10px;padding:10px 12px;border-radius:8px;border:0.5px solid #ddd;background:#fff}
+.task-dot{width:8px;height:8px;border-radius:50%;margin-top:5px}
+.task-name{font-size:13px;line-height:1.5}
+.task-sub{font-size:11px;color:#888;margin-top:2px}
+.assignee{font-size:11px;padding:2px 8px;border-radius:100px;background:#f0f0f0;color:#555;white-space:nowrap}
+.pts{font-size:11px;font-weight:500;color:#888;white-space:nowrap;padding-top:2px}
+.section-label{font-size:11px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:.05em;margin:1rem 0 6px}
+.dot-batch{background:#534AB7}.dot-speed{background:#0F6E56}.dot-int{background:#BA7517}.dot-viz{background:#185FA5}.dot-doc{background:#888780}.dot-swarm{background:#C0392B}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:1.5rem}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#888}
+.leg-dot{width:8px;height:8px;border-radius:50%}
+.summary-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1.5rem}
+.sum-card{background:#ececea;border-radius:8px;padding:10px 12px}
+.sum-label{font-size:11px;color:#888;margin-bottom:4px}
+.sum-val{font-size:20px;font-weight:500}
+.gh-section{display:flex;flex-direction:column;gap:10px}
+.gh-card{border-radius:8px;border:0.5px solid #ddd;background:#fff;padding:12px 14px;margin-bottom:8px}
+.gh-title{font-size:13px;font-weight:500;margin-bottom:6px}
+.gh-body{font-size:12px;color:#555;line-height:1.8}
+.code{font-family:monospace;font-size:11px;background:#f0f0f0;padding:2px 6px;border-radius:4px;color:#222}
+.node-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem}
+.node-card{border-radius:10px;padding:14px 16px;border:1.5px solid #ddd}
+.node-anass{background:#F0EEFF;border-color:#8B7ED8}
+.node-chawi{background:#E8F8F0;border-color:#27AE60}
+.node-hamza{background:#FFF3E0;border-color:#E67E22}
+.node-khalid{background:#E8F4FD;border-color:#2980B9}
+.node-title{font-size:13px;font-weight:600;margin-bottom:2px}
+.node-spec{font-size:10px;color:#888;margin-bottom:8px}
+.node-containers{display:flex;flex-direction:column;gap:4px}
+.container-pill{font-size:11px;padding:3px 10px;border-radius:6px;background:#fff;border:0.5px solid #ddd;display:flex;justify-content:space-between;align-items:center}
+.container-ram{font-size:10px;color:#aaa}
+.node-total{font-size:10px;color:#888;margin-top:6px;text-align:right}
+.swarm-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:#C0392B;color:#fff;margin-left:6px;font-weight:600}
+.worker-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:#7F8C8D;color:#fff;margin-left:6px;font-weight:600}
+.done-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:#27AE60;color:#fff;margin-left:4px}
+.vpn-section{background:#FFF8E1;border:0.5px solid #F9A825;border-radius:8px;padding:12px 14px;margin-bottom:1rem;font-size:12px;color:#555;line-height:1.7}
+.vpn-title{font-size:13px;font-weight:600;color:#E65100;margin-bottom:6px}
+.arch-diagram{background:#1a1a2e;border-radius:10px;padding:16px;margin-bottom:1rem;font-family:monospace;font-size:11px;color:#eee;line-height:1.8;overflow-x:auto;white-space:pre}
+.warning-box{background:#FFF3CD;border:0.5px solid #FFC107;border-radius:8px;padding:10px 14px;font-size:12px;color:#856404;margin-bottom:1rem;line-height:1.6}
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:1rem}
+.role-card{border-radius:8px;border:0.5px solid #ddd;padding:10px 12px;background:#fff}
+.role-name{font-size:13px;font-weight:500;margin-bottom:4px}
+.role-resp{font-size:11px;color:#666;line-height:1.6}
+</style>
+</head>
+<body>
+<h1>RAPID — Scrum Backlog v2 <span style="font-size:13px;color:#C0392B;font-weight:400">· Docker Swarm Edition</span></h1>
+<div class="meta">Detection de menaces cybersecurite · Lambda Architecture · Sprints 2-4 · Docker Swarm + Tailscale VPN · 4 noeuds</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="show('strategy',this)">Architecture Swarm</div>
+  <div class="tab" onclick="show('sprint1',this)">Sprint 1 Done</div>
+  <div class="tab" onclick="show('sprint2',this)">Sprint 2 Speed</div>
+  <div class="tab" onclick="show('sprint3',this)">Sprint 3 Integration</div>
+  <div class="tab" onclick="show('sprint4',this)">Sprint 4 Bonus</div>
+  <div class="tab" onclick="show('setup',this)">Setup Swarm</div>
+</div>
+
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot dot-batch"></div>Batch</div>
+  <div class="leg-item"><div class="leg-dot dot-speed"></div>Speed</div>
+  <div class="leg-item"><div class="leg-dot dot-int"></div>Integration</div>
+  <div class="leg-item"><div class="leg-dot dot-viz"></div>Visualisation</div>
+  <div class="leg-item"><div class="leg-dot dot-doc"></div>Doc</div>
+  <div class="leg-item"><div class="leg-dot dot-swarm"></div>Swarm/Infra</div>
+</div>
+
+<!-- STRATEGY TAB -->
+<div id="strategy" class="panel active">
+  <div class="sprint-header">
+    <div class="sprint-badge" style="background:#FDEDEC;color:#C0392B">Nouvelle Strategie</div>
+    <div>
+      <div class="sprint-title">Docker Swarm + Tailscale VPN</div>
+      <div class="sprint-subtitle">Chaque membre ne lance que les conteneurs de ses propres taches</div>
+    </div>
+  </div>
+
+  <div class="warning-box">
+    <strong>Pourquoi ce changement ?</strong> En Sprint 1, tout le monde faisait tourner les 8 conteneurs en local. Khalid (8GB RAM) ne peut pas faire tourner Cassandra + HBase + Spark simultanement. La nouvelle strategie distribue les conteneurs selon la puissance de chaque machine. Chaque membre accede aux services des autres via Tailscale VPN.
+  </div>
+
+  <div class="section-label">Repartition des conteneurs par machine</div>
+  <div class="node-grid">
+    <div class="node-card node-anass">
+      <div class="node-title">Anass <span class="swarm-badge">SWARM MANAGER</span></div>
+      <div class="node-spec">Snapdragon X Plus · ARM64 · 32 GB RAM</div>
+      <div class="node-containers">
+        <div class="container-pill">namenode (HDFS) <span class="container-ram">~1.5 GB</span></div>
+        <div class="container-pill">datanode (HDFS) <span class="container-ram">~1 GB</span></div>
+        <div class="container-pill">zookeeper <span class="container-ram">~512 MB</span></div>
+        <div class="container-pill">kafka <span class="container-ram">~512 MB</span></div>
+        <div class="container-pill">flask-api (Sprint 3) <span class="container-ram">~256 MB</span></div>
+      </div>
+      <div class="node-total">Total: ~4 GB / 32 GB · Taches: Infra + API REST</div>
+    </div>
+    <div class="node-card node-chawi">
+      <div class="node-title">Chawi <span class="worker-badge">WORKER</span></div>
+      <div class="node-spec">Intel i7 10th gen · x86_64 · 32 GB RAM</div>
+      <div class="node-containers">
+        <div class="container-pill">cassandra <span class="container-ram">~2 GB</span></div>
+        <div class="container-pill">hbase <span class="container-ram">~2 GB</span></div>
+        <div class="container-pill">nginx-dashboard (Sprint 3) <span class="container-ram">~128 MB</span></div>
+      </div>
+      <div class="node-total">Total: ~4.5 GB / 32 GB · Taches: Serving + Dashboard</div>
+    </div>
+    <div class="node-card node-hamza">
+      <div class="node-title">Hamza <span class="worker-badge">WORKER</span></div>
+      <div class="node-spec">Intel i5 8th gen · x86_64 · 16 GB RAM</div>
+      <div class="node-containers">
+        <div class="container-pill">spark-master <span class="container-ram">~1 GB</span></div>
+        <div class="container-pill">spark-worker <span class="container-ram">~2 GB</span></div>
+      </div>
+      <div class="node-total">Total: ~3 GB / 16 GB · Taches: Batch + Kafka Producer</div>
+    </div>
+    <div class="node-card node-khalid">
+      <div class="node-title">Khalid <span class="worker-badge">WORKER</span></div>
+      <div class="node-spec">Intel i5 6th gen · x86_64 · 8 GB RAM</div>
+      <div class="node-containers">
+        <div class="container-pill">spark-streaming <span class="container-ram">~1.5 GB</span></div>
+      </div>
+      <div class="node-total">Total: ~1.5 GB / 8 GB · Taches: Streaming + ML Sprint 4</div>
+    </div>
+  </div>
+
+  <div class="section-label">Architecture reseau Tailscale VPN</div>
+  <div class="arch-diagram"><span style="color:#A29BFE">  ANASS (100.64.0.1)          CHAWI (100.64.0.2)</span>
+<span style="color:#A29BFE">  namenode  :9000             cassandra  :9042</span>
+<span style="color:#A29BFE">  datanode  :9864    &lt;-----&gt;  hbase      :16010</span>
+<span style="color:#A29BFE">  zookeeper :2181             dashboard  :3000</span>
+<span style="color:#A29BFE">  kafka     :9092</span>
+<span style="color:#A29BFE">  flask-api :5000</span>
+         <span style="color:#DFE6E9">|                           |</span>
+         <span style="color:#DFE6E9">|   [ TAILSCALE VPN ]        |</span>
+         <span style="color:#DFE6E9">|                           |</span>
+<span style="color:#FDCB6E">  HAMZA (100.64.0.3)          KHALID (100.64.0.4)</span>
+<span style="color:#FDCB6E">  spark-master :8080 &lt;-----&gt;  spark-streaming</span>
+<span style="color:#FDCB6E">  spark-worker :7077          lit kafka  100.64.0.1:9092</span>
+<span style="color:#FDCB6E">  lit HDFS 100.64.0.1:9000    ecrit cass 100.64.0.2:9042</span></div>
+
+  <div class="gh-card">
+    <div class="gh-title">Comment chaque membre se connecte aux services des autres</div>
+    <div class="gh-body">
+      <strong>Hamza</strong> lit HDFS de Anass :<br>
+      <span class="code">spark.read.csv("hdfs://100.64.0.1:9000/logs/...")</span><br><br>
+      <strong>Khalid</strong> lit Kafka de Anass :<br>
+      <span class="code">.option("kafka.bootstrap.servers", "100.64.0.1:9092")</span><br><br>
+      <strong>Khalid</strong> ecrit dans Cassandra de Chawi :<br>
+      <span class="code">.option("spark.cassandra.connection.host", "100.64.0.2")</span><br><br>
+      <strong>Chawi</strong> recoit les batch views de Hamza via HBase local + HDFS Anass<br><br>
+      Remplacer les IPs par les vraies IPs Tailscale apres setup.
+    </div>
+  </div>
+</div>
+
+<!-- SPRINT 1 TAB -->
+<div id="sprint1" class="panel">
+  <div class="sprint-header">
+    <div class="sprint-badge s1">Semaine 1</div>
+    <div>
+      <div class="sprint-title">Sprint 1 — Batch Layer <span class="done-badge">TERMINE</span></div>
+      <div class="sprint-subtitle">Tous les conteneurs sur la machine Anass · Verifie et valide</div>
+    </div>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card"><div class="sum-label">Story points</div><div class="sum-val">34 pts</div></div>
+    <div class="sum-card"><div class="sum-label">Statut</div><div class="sum-val" style="color:#27AE60;font-size:16px">Termine</div></div>
+    <div class="sum-card"><div class="sum-label">Tests</div><div class="sum-val">10 / 10</div></div>
+  </div>
+  <div class="section-label">Ce qui a ete realise</div>
+  <div class="task-grid">
+    <div class="task"><div class="task-dot dot-batch"></div><div><div class="task-name">Docker Compose complet — 8 conteneurs operationnels</div><div class="task-sub">Kafka + HDFS + HBase + Spark + Cassandra + init automatique + tests</div></div><div class="assignee">Anass</div><div class="pts">Done</div></div>
+    <div class="task"><div class="task-dot dot-batch"></div><div><div class="task-name">HDFS partitionne year=2024 / month=01..12</div><div class="task-sub">Structure verifiee avec hdfs dfs -ls -R</div></div><div class="assignee">Anass</div><div class="pts">Done</div></div>
+    <div class="task"><div class="task-dot dot-batch"></div><div><div class="task-name">Dataset Kaggle 6M rows charge dans HDFS</div><div class="task-sub">cybersecurity_threat_detection_logs.csv · upload via docker cp + hdfs put</div></div><div class="assignee">Hamza</div><div class="pts">Done</div></div>
+    <div class="task"><div class="task-dot dot-batch"></div><div><div class="task-name">Spark Batch : Top 10 IPs, port scans, SQLi/XSS, bytes correlation</div><div class="task-sub">Outputs parquet dans /data/cybersecurity/batch/</div></div><div class="assignee">Equipe</div><div class="pts">Done</div></div>
+    <div class="task"><div class="task-dot dot-batch"></div><div><div class="task-name">Cassandra schema : realtime_threats + recent_attacks</div><div class="task-sub">Keyspace rapid · auto-cree par cassandra-setup</div></div><div class="assignee">Anass</div><div class="pts">Done</div></div>
+    <div class="task"><div class="task-dot dot-doc"></div><div><div class="task-name">README + test suite automatise scripts/test_sprint1.ps1</div><div class="task-sub">30+ tests · rapport PASS / FAIL / WARN par service</div></div><div class="assignee">Anass</div><div class="pts">Done</div></div>
+  </div>
+  <div class="warning-box">
+    <strong>Transition vers Sprint 2 :</strong> Anass garde ses conteneurs actifs. Chawi, Hamza et Khalid installent Tailscale, rejoignent le Swarm, puis lancent uniquement leurs propres conteneurs. Plus personne ne lance les 8 conteneurs en meme temps.
+  </div>
+</div>
+
+<!-- SPRINT 2 TAB -->
+<div id="sprint2" class="panel">
+  <div class="sprint-header">
+    <div class="sprint-badge s2">Semaine 2</div>
+    <div>
+      <div class="sprint-title">Sprint 2 — Speed Layer</div>
+      <div class="sprint-subtitle">Kafka + Spark Streaming + Cassandra · 1 a 2 conteneurs par membre</div>
+    </div>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card"><div class="sum-label">Story points</div><div class="sum-val">36 pts</div></div>
+    <div class="sum-card"><div class="sum-label">Duree</div><div class="sum-val">7 jours</div></div>
+    <div class="sum-card"><div class="sum-label">Livrables</div><div class="sum-val">6 items</div></div>
+  </div>
+
+  <div class="section-label" style="color:#8B7ED8">Anass · Snapdragon 32GB · Conteneurs actifs: kafka + zookeeper + namenode + datanode</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#C3B9F7">
+      <div class="task-dot dot-swarm"></div>
+      <div>
+        <div class="task-name">Validation topic Kafka cybersecurity-logs (3 partitions)</div>
+        <div class="task-sub">Deja cree en Sprint 1 · valider consumer group · tester depuis machines Hamza et Khalid · aucun nouveau conteneur</div>
+      </div>
+      <div class="assignee">Anass</div><div class="pts">2 pts</div>
+    </div>
+    <div class="task" style="border-color:#C3B9F7">
+      <div class="task-dot dot-swarm"></div>
+      <div>
+        <div class="task-name">Coordonner schema Cassandra accessible via Tailscale</div>
+        <div class="task-sub">Verifier que Khalid et Hamza peuvent ecrire dans Cassandra de Chawi via 100.64.0.2:9042 · aucun nouveau conteneur</div>
+      </div>
+      <div class="assignee">Anass</div><div class="pts">2 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#E67E22">Hamza · i5-8gen 16GB · Conteneurs: spark-master + spark-worker</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#FDEBD0">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Producteur Kafka personnalise — rejoue CSV ligne par ligne</div>
+        <div class="task-sub">Script Python avec delai simule · se connecte a kafka://100.64.0.1:9092 · lance depuis spark-master</div>
+      </div>
+      <div class="assignee">Hamza</div><div class="pts">5 pts</div>
+    </div>
+    <div class="task" style="border-color:#FDEBD0">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Ecriture Spark Streaming vers Cassandra (foreachBatch)</div>
+        <div class="task-sub">spark-cassandra-connector · ecrit dans Cassandra de Chawi sur 100.64.0.2:9042 · spark-submit depuis spark-master</div>
+      </div>
+      <div class="assignee">Hamza</div><div class="pts">3 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#2980B9">Khalid · i5-6gen 8GB · Conteneur unique: spark-streaming</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D6EAF8">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Detection brute-force (5+ echecs / 1 min / IP)</div>
+        <div class="task-sub">readStream depuis kafka://100.64.0.1:9092 · window 1 min · count > 5 · 1 seul conteneur spark-streaming</div>
+      </div>
+      <div class="assignee">Khalid</div><div class="pts">6 pts</div>
+    </div>
+    <div class="task" style="border-color:#D6EAF8">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Detection signatures d'attaques connues</div>
+        <div class="task-sub">sqlmap · nikto · OR 1=1 dans user_agent / request_path · meme conteneur spark-streaming</div>
+      </div>
+      <div class="assignee">Khalid</div><div class="pts">5 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#27AE60">Chawi · i7-10gen 32GB · Conteneurs: cassandra + hbase</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Detection volume anormal (> 10 Mo / 10 sec)</div>
+        <div class="task-sub">sum(bytes_transferred) sur window sliding · job soumis via Spark de Hamza sur 100.64.0.3:8080</div>
+      </div>
+      <div class="assignee">Chawi</div><div class="pts">5 pts</div>
+    </div>
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot dot-speed"></div>
+      <div>
+        <div class="task-name">Score de menace en temps reel par IP (scoring composite)</div>
+        <div class="task-sub">brute-force + signature + volume = score final · ecrit dans Cassandra locale 127.0.0.1:9042</div>
+      </div>
+      <div class="assignee">Chawi</div><div class="pts">6 pts</div>
+    </div>
+  </div>
+
+  <div class="gh-card" style="background:#F8F9FA">
+    <div class="gh-title">Resume conteneurs Sprint 2 — qui lance quoi</div>
+    <div class="gh-body">
+      <strong>Anass</strong> — kafka + zookeeper + namenode + datanode (deja up depuis Sprint 1)<br>
+      <span class="code">docker-compose up -d namenode datanode zookeeper kafka</span><br><br>
+      <strong>Hamza</strong> — spark-master + spark-worker uniquement<br>
+      <span class="code">docker-compose up -d spark-master spark-worker</span><br><br>
+      <strong>Khalid</strong> — spark-streaming uniquement (1 conteneur)<br>
+      <span class="code">docker-compose up -d spark-streaming</span><br><br>
+      <strong>Chawi</strong> — cassandra + hbase uniquement<br>
+      <span class="code">docker-compose up -d cassandra hbase</span>
+    </div>
+  </div>
+</div>
+
+<!-- SPRINT 3 TAB -->
+<div id="sprint3" class="panel">
+  <div class="sprint-header">
+    <div class="sprint-badge s3">Semaine 3</div>
+    <div>
+      <div class="sprint-title">Sprint 3 — Integration et Livraison</div>
+      <div class="sprint-subtitle">API REST + Dashboard + Demo · Distribution maximale</div>
+    </div>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card"><div class="sum-label">Story points</div><div class="sum-val">30 pts</div></div>
+    <div class="sum-card"><div class="sum-label">Duree</div><div class="sum-val">7 jours</div></div>
+    <div class="sum-card"><div class="sum-label">Livrables</div><div class="sum-val">5 items</div></div>
+  </div>
+
+  <div class="section-label" style="color:#8B7ED8">Anass · Snapdragon 32GB · Conteneurs: kafka + namenode + datanode + flask-api (nouveau)</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#C3B9F7">
+      <div class="task-dot dot-int"></div>
+      <div>
+        <div class="task-name">API Flask/FastAPI : GET /threats/ip/{ip}</div>
+        <div class="task-sub">Query HBase Chawi (100.64.0.2:16000) + Cassandra Chawi (100.64.0.2:9042) · retourne score historique + menaces actives · Nouveau conteneur: flask-api port 5000</div>
+      </div>
+      <div class="assignee">Anass</div><div class="pts">6 pts</div>
+    </div>
+    <div class="task" style="border-color:#C3B9F7">
+      <div class="task-dot dot-int"></div>
+      <div>
+        <div class="task-name">Scoring adaptatif — ajustement dynamique des seuils</div>
+        <div class="task-sub">Seuil brute-force recalcule selon moyenne 24h · integre dans flask-api · aucun nouveau conteneur</div>
+      </div>
+      <div class="assignee">Anass</div><div class="pts">4 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#E67E22">Hamza · i5-8gen 16GB · Conteneurs: spark-master + spark-worker (inchanges)</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#FDEBD0">
+      <div class="task-dot dot-int"></div>
+      <div>
+        <div class="task-name">Endpoints GET /threats/top10 + /threats/timeline</div>
+        <div class="task-sub">Agregats pre-calcules depuis HBase Chawi · job Spark qui prepare les vues · spark-submit depuis spark-master</div>
+      </div>
+      <div class="assignee">Hamza</div><div class="pts">4 pts</div>
+    </div>
+    <div class="task" style="border-color:#FDEBD0">
+      <div class="task-dot dot-doc"></div>
+      <div>
+        <div class="task-name">Script demo end-to-end + rapport technique</div>
+        <div class="task-sub">Producteur Kafka → Streaming Khalid → Dashboard Chawi visible en live · script Python sur spark-master</div>
+      </div>
+      <div class="assignee">Hamza + Tous</div><div class="pts">4 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#2980B9">Khalid · i5-6gen 8GB · Conteneur: spark-streaming (inchange)</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D6EAF8">
+      <div class="task-dot dot-viz"></div>
+      <div>
+        <div class="task-name">Dashboard HTML/JS : Top 10 IPs + Timeline des attaques</div>
+        <div class="task-sub">Chart.js · polling toutes 5s sur API Anass 100.64.0.1:5000 · fichiers HTML statiques · servis par nginx Chawi</div>
+      </div>
+      <div class="assignee">Khalid</div><div class="pts">7 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#27AE60">Chawi · i7-10gen 32GB · Conteneurs: cassandra + hbase + nginx-dashboard (nouveau)</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot dot-viz"></div>
+      <div>
+        <div class="task-name">Carte des menaces temps reel + types par protocole</div>
+        <div class="task-sub">Chart.js bar/donut + badges menaces actives · Nouveau conteneur: nginx-dashboard sur port 3000 · sert les fichiers HTML de Khalid</div>
+      </div>
+      <div class="assignee">Chawi</div><div class="pts">5 pts</div>
+    </div>
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot dot-doc"></div>
+      <div>
+        <div class="task-name">Rapport technique — architecture, choix, schemas</div>
+        <div class="task-sub">Lambda architecture + Docker Swarm + justifications + difficultes rencontrees · Google Docs partage</div>
+      </div>
+      <div class="assignee">Tous</div><div class="pts">4 pts</div>
+    </div>
+  </div>
+
+  <div class="gh-card" style="background:#F8F9FA">
+    <div class="gh-title">Resume conteneurs Sprint 3 — nouveaux ajouts</div>
+    <div class="gh-body">
+      <strong>Anass</strong> — ajoute flask-api : <span class="code">docker-compose up -d flask-api</span><br>
+      <strong>Hamza</strong> — inchange : spark-master + spark-worker<br>
+      <strong>Khalid</strong> — inchange : spark-streaming · developpe HTML/JS en local<br>
+      <strong>Chawi</strong> — ajoute nginx : <span class="code">docker-compose up -d nginx-dashboard</span>
+    </div>
+  </div>
+</div>
+
+<!-- SPRINT 4 TAB -->
+<div id="sprint4" class="panel">
+  <div class="sprint-header">
+    <div class="sprint-badge" style="background:#FCEBEB;color:#791F1F">Bonus</div>
+    <div>
+      <div class="sprint-title">Sprint 4 — Ameliorations et Bonus</div>
+      <div class="sprint-subtitle">ML + Geolocalisation + Correlation multi-etapes · Si temps disponible</div>
+    </div>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card"><div class="sum-label">Story points</div><div class="sum-val">28 pts</div></div>
+    <div class="sum-card"><div class="sum-label">Statut</div><div class="sum-val" style="font-size:14px;padding-top:4px">Si temps dispo</div></div>
+    <div class="sum-card"><div class="sum-label">Impact</div><div class="sum-val">+bonus</div></div>
+  </div>
+
+  <div class="section-label" style="color:#2980B9">Khalid · i5-6gen 8GB · Conteneur: spark-streaming (inchange)</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D6EAF8">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Classifier MLlib sur threat_label (Random Forest)</div>
+        <div class="task-sub">features: bytes, protocol, action, log_type · spark-submit depuis spark-streaming · lit HDFS Anass 100.64.0.1:9000</div>
+      </div>
+      <div class="assignee">Khalid</div><div class="pts">8 pts</div>
+    </div>
+    <div class="task" style="border-color:#D6EAF8">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Evaluation modele + export predictions en parquet HDFS</div>
+        <div class="task-sub">Accuracy, F1-score · sauvegarde dans /data/cybersecurity/batch/ sur Anass · meme conteneur</div>
+      </div>
+      <div class="assignee">Khalid</div><div class="pts">4 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#E67E22">Hamza · i5-8gen 16GB · Conteneurs: spark-master + spark-worker</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#FDEBD0">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Detection attaques multi-etapes (reconnaissance vers exploitation)</div>
+        <div class="task-sub">Sequence: scan ports, SQLi, brute-force depuis meme IP · fenetre temporelle · spark-submit depuis spark-master</div>
+      </div>
+      <div class="assignee">Hamza</div><div class="pts">7 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#27AE60">Chawi · i7-10gen 32GB · Conteneurs: cassandra + hbase + nginx</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Enrichissement IPs avec GeoIP MaxMind GeoLite2</div>
+        <div class="task-sub">Colonnes: latitude, longitude, country · script Python local · lit HDFS Anass · ecrit dans HBase local</div>
+      </div>
+      <div class="assignee">Chawi</div><div class="pts">3 pts</div>
+    </div>
+    <div class="task" style="border-color:#D5F5E3">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Carte choroplethes dans le dashboard (Leaflet.js)</div>
+        <div class="task-sub">Heatmap par pays source · ajouter au nginx-dashboard local · aucun nouveau conteneur</div>
+      </div>
+      <div class="assignee">Chawi</div><div class="pts">4 pts</div>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:#8B7ED8">Anass · Conteneurs: inchanges</div>
+  <div class="task-grid">
+    <div class="task" style="border-color:#C3B9F7">
+      <div class="task-dot" style="background:#A32D2D"></div>
+      <div>
+        <div class="task-name">Ajustement dynamique des seuils de detection</div>
+        <div class="task-sub">Moyenne glissante 24h · recalcul automatique · integre dans flask-api · aucun nouveau conteneur</div>
+      </div>
+      <div class="assignee">Anass</div><div class="pts">2 pts</div>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem;padding:10px 14px;border-radius:8px;background:#FFF8F8;border:0.5px solid #F7C1C1;font-size:12px;color:#791F1F;line-height:1.7">
+    <strong>Conseil :</strong> Priorite: geolocalisation (impact visuel fort) et ML si pipeline batch stable. Correlation multi-etapes en dernier car la plus complexe. Chaque membre travaille independamment sur sa machine grace au Swarm.
+  </div>
+</div>
+
+<!-- SETUP TAB -->
+<div id="setup" class="panel">
+  <div class="sprint-header">
+    <div class="sprint-badge" style="background:#FDEDEC;color:#C0392B">Setup</div>
+    <div>
+      <div class="sprint-title">Guide Setup Docker Swarm + Tailscale</div>
+      <div class="sprint-subtitle">A faire une seule fois avant Sprint 2 · Ordre strict a respecter</div>
+    </div>
+  </div>
+
+  <div class="vpn-section">
+    <div class="vpn-title">Etape 1 — Tailscale VPN (tous les membres, 5 minutes chacun)</div>
+    Tailscale cree un reseau prive entre vos machines. Chaque machine obtient une IP fixe 100.x.x.x accessible depuis partout sans configuration reseau complexe.
+    <br><br>
+    1. Installer Tailscale : <span class="code">https://tailscale.com/download</span><br>
+    2. Se connecter avec un compte Google ou GitHub<br>
+    3. Anass cree un compte d'equipe et partage le lien d'invitation<br>
+    4. Chaque membre recupere son IP : <span class="code">tailscale ip -4</span><br>
+    5. Partager les IPs dans le groupe WhatsApp
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 2 — Initialiser Docker Swarm (Anass uniquement)</div>
+    <div class="gh-body">
+      <span class="code">docker swarm init --advertise-addr $(tailscale ip -4)</span><br><br>
+      Copier le token affiche qui ressemble a :<br>
+      <span class="code">docker swarm join --token SWMTKN-1-xxx 100.64.0.1:2377</span><br><br>
+      Envoyer ce token exact aux trois autres membres.
+    </div>
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 3 — Rejoindre le Swarm (Chawi, Hamza, Khalid)</div>
+    <div class="gh-body">
+      Chaque membre colle et execute le token recu :<br>
+      <span class="code">docker swarm join --token SWMTKN-1-xxx 100.64.0.1:2377</span><br><br>
+      Verifier sur la machine Anass que les 4 noeuds sont visibles :<br>
+      <span class="code">docker node ls</span><br><br>
+      Resultat attendu: 1 manager (Anass) + 3 workers actifs.
+    </div>
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 4 — Reseau overlay Swarm (Anass)</div>
+    <div class="gh-body">
+      Creer un reseau overlay pour que tous les conteneurs se voient entre machines :<br>
+      <span class="code">docker network create --driver overlay --attachable rapid-overlay</span><br><br>
+      Chaque docker-compose.yml utilisera <span class="code">network: rapid-overlay</span> pour ses services.
+    </div>
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 5 — Lancement par membre</div>
+    <div class="gh-body">
+      <strong>Anass lance ses services :</strong><br>
+      <span class="code">docker-compose up -d namenode datanode zookeeper kafka</span><br><br>
+      <strong>Chawi lance ses services :</strong><br>
+      <span class="code">docker-compose up -d cassandra hbase</span><br><br>
+      <strong>Hamza lance ses services :</strong><br>
+      <span class="code">docker-compose up -d spark-master spark-worker</span><br><br>
+      <strong>Khalid lance son service :</strong><br>
+      <span class="code">docker-compose up -d spark-streaming</span>
+    </div>
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 6 — Fichier .env.local par membre (git-ignore)</div>
+    <div class="gh-body">
+      Chaque membre cree un fichier <span class="code">.env.local</span> avec les IPs Tailscale reelles :<br><br>
+      <span class="code">ANASS_IP=100.64.0.1</span> &nbsp;# HDFS, Kafka, Zookeeper, API<br>
+      <span class="code">CHAWI_IP=100.64.0.2</span> &nbsp;# Cassandra, HBase, Dashboard<br>
+      <span class="code">HAMZA_IP=100.64.0.3</span> &nbsp;# Spark Master<br>
+      <span class="code">KHALID_IP=100.64.0.4</span> # Spark Streaming<br><br>
+      Ces variables sont utilisees dans tous les scripts Spark et Python.
+    </div>
+  </div>
+
+  <div class="gh-card">
+    <div class="gh-title">Etape 7 — Verification de la connectivite</div>
+    <div class="gh-body">
+      <strong>Hamza teste HDFS d'Anass :</strong><br>
+      <span class="code">curl http://100.64.0.1:9870</span> doit retourner la page HDFS UI<br><br>
+      <strong>Khalid teste Kafka d'Anass :</strong><br>
+      <span class="code">nc -zv 100.64.0.1 9092</span> doit repondre connection succeeded<br><br>
+      <strong>Chawi teste sa Cassandra locale :</strong><br>
+      <span class="code">cqlsh 127.0.0.1</span> doit ouvrir le shell Cassandra<br><br>
+      <strong>Hamza teste Spark UI local :</strong><br>
+      <span class="code">curl http://localhost:8080</span> doit retourner Spark Master UI
+    </div>
+  </div>
+
+  <div class="section-label">Roles et machines — Resume final</div>
+  <div class="roles-grid">
+    <div class="role-card node-anass" style="border-color:#8B7ED8">
+      <div class="role-name">Anass — Swarm Manager + Infra</div>
+      <div class="role-resp">
+        Machine: Snapdragon X Plus ARM64 · 32 GB<br>
+        Conteneurs: namenode, datanode, zookeeper, kafka, flask-api<br>
+        Taches: Swarm, HDFS, Kafka, REST API, scoring adaptatif<br>
+        IP Tailscale: 100.64.0.1
+      </div>
+    </div>
+    <div class="role-card node-chawi" style="border-color:#27AE60">
+      <div class="role-name">Chawi — Lead Serving</div>
+      <div class="role-resp">
+        Machine: Intel i7 10gen · 32 GB<br>
+        Conteneurs: cassandra, hbase, nginx-dashboard<br>
+        Taches: Cassandra schema, HBase tables, Dashboard, Geolocalisation<br>
+        IP Tailscale: 100.64.0.2
+      </div>
+    </div>
+    <div class="role-card node-hamza" style="border-color:#E67E22">
+      <div class="role-name">Hamza — Lead Batch</div>
+      <div class="role-resp">
+        Machine: Intel i5 8gen · 16 GB<br>
+        Conteneurs: spark-master, spark-worker<br>
+        Taches: Kafka producer, Spark batch, Cassandra writer, correlation<br>
+        IP Tailscale: 100.64.0.3
+      </div>
+    </div>
+    <div class="role-card node-khalid" style="border-color:#2980B9">
+      <div class="role-name">Khalid — Lead Streaming</div>
+      <div class="role-resp">
+        Machine: Intel i5 6gen · 8 GB<br>
+        Conteneurs: spark-streaming uniquement (1 seul !)<br>
+        Taches: Brute-force, signatures, Dashboard HTML, ML Sprint 4<br>
+        IP Tailscale: 100.64.0.4
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function show(id, tab) {
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.getElementById(id).classList.add('active');
+  tab.classList.add('active');
+}
+</script>
+</body>
+</html>
