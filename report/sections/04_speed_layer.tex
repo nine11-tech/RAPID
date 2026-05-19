@@ -1,0 +1,401 @@
+
+\section{Speed Layer : Détection en temps réel}
+
+La \textit{Speed Layer} représente la partie temps réel de l'architecture Lambda adoptée dans le projet RAPID. Son rôle est de traiter les journaux de cybersécurité dès leur arrivée dans le flux Kafka, afin de produire rapidement des alertes exploitables par la couche de visualisation et par l'API REST. Contrairement à la \textit{Batch Layer}, qui travaille sur l'ensemble historique des données, la \textit{Speed Layer} se concentre sur les événements récents et sur la détection rapide des comportements suspects.
+
+Dans notre implémentation, cette couche repose principalement sur trois composants :
+\begin{itemize}
+    \item \textbf{Kafka}, utilisé comme bus de messages pour transporter les journaux de sécurité en continu ;
+    \item \textbf{PySpark Structured Streaming}, utilisé pour consommer les messages Kafka, les analyser par micro-lots et appliquer les règles de détection ;
+    \item \textbf{Cassandra}, utilisée comme base NoSQL pour stocker les alertes et les résultats temps réel avec une faible latence.
+\end{itemize}
+
+\subsection{Ingestion des journaux avec Kafka}
+
+Les journaux de cybersécurité sont publiés dans le topic Kafka \texttt{cybersecurity-logs}. Chaque message correspond à un événement réseau ou applicatif contenant plusieurs champs, comme l'adresse IP source, l'adresse IP destination, le protocole, l'action, le type de journal, le chemin demandé, l'agent utilisateur, le label de menace et le volume de données transférées.
+
+Le topic Kafka est partitionné afin de permettre une consommation parallèle. Cette organisation améliore le débit de traitement et permet à Spark de lire les données de manière distribuée. Les offsets Kafka ont été vérifiés à l'aide de l'outil \texttt{GetOffsetShell}. Cette vérification permet de confirmer que les messages sont bien injectés dans Kafka et que les offsets augmentent au fur et à mesure de l'arrivée des données.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.92\textwidth]{\detokenize{figures/Speed Layer- Hamza/kafkatopic.png}}
+    \caption{Vérification des offsets du topic Kafka \texttt{cybersecurity-logs}.}
+    \label{fig:speed-kafka-offsets}
+\end{figure}
+
+Un consommateur Kafka a également été utilisé pour visualiser directement les messages publiés dans le topic. Les données observées confirment que les événements contiennent les champs nécessaires pour les traitements de détection : \texttt{source\_ip}, \texttt{dest\_ip}, \texttt{protocol}, \texttt{action}, \texttt{threat\_label}, \texttt{log\_type}, \texttt{bytes\_transferred}, \texttt{user\_agent} et \texttt{request\_path}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\detokenize{figures/Speed Layer- Hamza/kafkarealtimeconsummer.png}}
+    \caption{Consommation directe des messages Kafka en temps réel.}
+    \label{fig:speed-kafka-consumer}
+\end{figure}
+
+\subsection{Traitement temps réel avec PySpark Structured Streaming}
+
+Le traitement temps réel est réalisé avec PySpark Structured Streaming. Spark se connecte au topic Kafka, lit les messages sous forme de flux continu, puis les transforme en DataFrame structuré. Les messages Kafka sont initialement reçus sous forme de chaînes JSON. Ils sont ensuite parsés pour extraire les champs nécessaires à l'analyse.
+
+Le principe général du pipeline est le suivant :
+\begin{enumerate}
+    \item lecture des messages depuis Kafka ;
+    \item conversion du champ \texttt{value} en chaîne JSON ;
+    \item extraction des champs du journal ;
+    \item application des règles de détection ;
+    \item agrégation par adresse IP et par fenêtre temporelle ;
+    \item écriture des résultats dans Cassandra.
+\end{enumerate}
+
+La commande \texttt{spark-submit} est exécutée avec les dépendances nécessaires pour Kafka et Cassandra. Les connecteurs utilisés permettent à Spark de lire depuis Kafka et d'écrire directement les résultats dans les tables Cassandra du keyspace \texttt{cybersecurity}.
+
+\subsection{Détection par signatures}
+
+La première famille de règles concerne la détection par signatures. Cette méthode consiste à rechercher dans les champs textuels du journal des indicateurs connus d'attaques ou d'outils offensifs. Les champs les plus importants pour cette détection sont :
+\begin{itemize}
+    \item \texttt{user\_agent}, qui peut révéler l'utilisation d'outils comme \texttt{sqlmap} ou \texttt{Nmap Scripting Engine} ;
+    \item \texttt{request\_path}, qui peut contenir des chemins sensibles comme \texttt{/admin}, \texttt{/login}, \texttt{/wp-login.php}, ou des charges utiles suspectes ;
+    \item \texttt{threat\_label}, qui permet de distinguer les événements bénins, suspects et malveillants.
+\end{itemize}
+
+Cette détection est utile pour identifier rapidement des comportements typiques d'un scan, d'une tentative d'injection SQL ou d'un accès à des ressources sensibles. Les événements détectés sont stockés dans la table Cassandra \texttt{signature\_alerts}. Chaque alerte conserve l'adresse IP source, l'horodatage, la raison de la détection, le chemin demandé, le label de menace et l'agent utilisateur.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\detokenize{figures/Speed Layer- Hamza/Screenshot 2026-05-13 194424.png}}
+    \caption{Détection par signatures et écriture des alertes dans Cassandra.}
+    \label{fig:speed-signature-detection}
+\end{figure}
+
+Les résultats montrent que le système détecte plusieurs événements liés à des outils de scan, notamment des agents utilisateurs contenant \texttt{SQLMap} ou \texttt{Nmap Scripting Engine}. Ces informations sont importantes car elles permettent d'identifier des phases de reconnaissance ou de test d'intrusion automatisé.
+
+\subsection{Détection de brute force}
+
+La deuxième règle de détection concerne les attaques de type \textit{brute force}. Une attaque brute force consiste à répéter un grand nombre de tentatives d'accès afin de deviner un mot de passe, trouver un point d'entrée ou forcer une authentification.
+
+Dans notre traitement, la détection repose sur une agrégation par adresse IP source et par fenêtre temporelle. Le principe est de compter les événements échoués ou bloqués associés à une même adresse IP dans une fenêtre courte. Lorsqu'une adresse IP dépasse un seuil défini, elle est considérée comme suspecte.
+
+Le seuil utilisé dans les tests est :
+\begin{itemize}
+    \item \textbf{5 tentatives ou plus} ;
+    \item dans une fenêtre d'environ \textbf{1 minute} ;
+    \item pour une même adresse IP source.
+\end{itemize}
+
+Lorsqu'une IP dépasse ce seuil, une alerte est produite avec le nombre de tentatives, la dernière date observée, le type d'attaque et un score de menace. Les alertes sont stockées dans la table Cassandra \texttt{realtime\_threats}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\detokenize{figures/Speed Layer- Hamza/Screenshot 2026-05-13 195824.png}}
+    \caption{Exécution du module de détection des attaques brute force.}
+    \label{fig:speed-bruteforce-detection}
+\end{figure}
+
+Les captures montrent que certaines adresses IP dépassent le seuil défini. Par exemple, une IP ayant 5 tentatives reçoit un score de 50, tandis qu'une IP ayant 6 ou 7 tentatives reçoit un score plus élevé. Cette logique permet de classer les alertes selon leur gravité.
+
+\subsection{Détection des volumes anormaux}
+
+La troisième règle concerne la détection d'un volume de trafic anormal. Ce type de détection est important pour repérer des comportements comme :
+\begin{itemize}
+    \item une exfiltration de données ;
+    \item un transfert massif inhabituel ;
+    \item une activité réseau excessive depuis une même adresse IP ;
+    \item un comportement automatisé générant un trafic élevé.
+\end{itemize}
+
+Avant de fixer le seuil, un script de test a été utilisé pour analyser un échantillon de messages Kafka. Ce test a permis d'estimer le volume moyen par message, le volume maximum, le nombre moyen de messages par IP et les IP les plus consommatrices en bande passante.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.70\textwidth]{\detokenize{figures/Speed Layer- Hamza/volume_test.png}}
+    \caption{Analyse statistique d'un échantillon de messages pour choisir le seuil de volume.}
+    \label{fig:speed-volume-test}
+\end{figure}
+
+À partir de cette analyse, une recommandation de fenêtre et de seuil a été établie. Le système utilise une fenêtre temporelle de 10 secondes et un seuil d'environ 3012 Ko. Cela signifie qu'une adresse IP est signalée si elle dépasse ce volume dans une fenêtre de 10 secondes.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{\detokenize{figures/Speed Layer- Hamza/volume_test1.png}}
+    \caption{Recommandation du seuil de détection de volume anormal.}
+    \label{fig:speed-volume-threshold}
+\end{figure}
+
+Lors de l'exécution du traitement, Spark calcule le total des octets transférés par adresse IP et par fenêtre temporelle. Si le total dépasse le seuil, une alerte est créée et stockée dans la table Cassandra \texttt{volume\_alerts}. Cette table conserve l'IP source, le début et la fin de la fenêtre, le volume total, le seuil utilisé et la raison de l'alerte.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.72\textwidth]{\detokenize{figures/Speed Layer- Hamza/volume_detection.png}}
+    \caption{Détection d'adresses IP dépassant le seuil de volume autorisé.}
+    \label{fig:speed-volume-detection}
+\end{figure}
+
+\subsection{Calcul du score de menace}
+
+En plus des alertes spécifiques, la \textit{Speed Layer} calcule un score de menace par adresse IP. Ce score permet de synthétiser plusieurs indicateurs dans une seule valeur numérique. Il facilite ensuite le classement des IP les plus dangereuses dans le tableau de bord.
+
+Les principaux indicateurs utilisés sont :
+\begin{itemize}
+    \item le nombre total d'événements associés à l'adresse IP ;
+    \item le nombre d'alertes par signatures ;
+    \item le nombre d'événements suspects ;
+    \item le nombre d'événements malveillants ;
+    \item la présence d'alertes brute force ;
+    \item le volume de trafic généré.
+\end{itemize}
+
+Le score final est stocké dans la table Cassandra \texttt{threat\_scores}. Cette table permet à la couche API et au tableau de bord de récupérer rapidement une vue synthétique des IP les plus risquées.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.90\textwidth]{\detokenize{figures/Speed Layer- Hamza/threat_score.png}}
+    \caption{Calcul des scores de menace par adresse IP.}
+    \label{fig:speed-threat-score}
+\end{figure}
+
+Cette approche rend la détection plus lisible. Au lieu de présenter uniquement des événements bruts, le système fournit une information agrégée et exploitable, ce qui facilite la priorisation des investigations.
+
+\subsection{Stockage temps réel dans Cassandra}
+
+Cassandra a été choisie pour la \textit{Speed Layer} car elle est adaptée aux écritures fréquentes et aux lectures rapides sur de grands volumes de données. Dans notre cas, Spark écrit régulièrement des micro-lots de résultats dans Cassandra. Chaque table est conçue selon le type de requête attendu par l'API et le tableau de bord.
+
+Le keyspace utilisé est \texttt{cybersecurity}. Les tables disponibles sont :
+\begin{itemize}
+    \item \texttt{logs} ;
+    \item \texttt{realtime\_threats} ;
+    \item \texttt{signature\_alerts} ;
+    \item \texttt{threat\_scores} ;
+    \item \texttt{volume\_alerts}.
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.62\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_tables_cassandra.png}}
+    \caption{Tables Cassandra utilisées par la Speed Layer.}
+    \label{fig:speed-cassandra-tables}
+\end{figure}
+
+\subsubsection{Table \texttt{logs}}
+
+La table \texttt{logs} conserve les événements bruts ou normalisés. Elle sert de base pour garder une trace des journaux reçus et pour permettre des vérifications ultérieures.
+
+\begin{table}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|p{8cm}|}
+        \hline
+        \textbf{Colonne} & \textbf{Type} & \textbf{Rôle} \\
+        \hline
+        \texttt{source\_ip} & \texttt{text} & Adresse IP à l'origine de l'événement. \\
+        \hline
+        \texttt{timestamp} & \texttt{timestamp} & Date et heure de l'événement. \\
+        \hline
+        \texttt{action} & \texttt{text} & Action observée, par exemple \texttt{allowed} ou \texttt{blocked}. \\
+        \hline
+        \texttt{bytes\_transferred} & \texttt{bigint} & Volume de données transférées. \\
+        \hline
+        \texttt{dest\_ip} & \texttt{text} & Adresse IP de destination. \\
+        \hline
+        \texttt{log\_type} & \texttt{text} & Type de journal : firewall, IDS, application, etc. \\
+        \hline
+        \texttt{protocol} & \texttt{text} & Protocole utilisé : HTTP, HTTPS, TCP, UDP, etc. \\
+        \hline
+        \texttt{request\_path} & \texttt{text} & Ressource ou chemin demandé. \\
+        \hline
+        \texttt{threat\_label} & \texttt{text} & Label associé à l'événement : benign, suspicious ou malicious. \\
+        \hline
+        \texttt{user\_agent} & \texttt{text} & Agent utilisateur détecté dans la requête. \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Structure logique de la table Cassandra \texttt{logs}.}
+    \label{tab:speed-logs-schema}
+\end{table}
+
+La clé primaire est composée de \texttt{source\_ip} et \texttt{timestamp}. Ce choix permet de retrouver efficacement les événements associés à une IP donnée tout en les ordonnant par date.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_table_logs.png}}
+    \caption{Description Cassandra de la table \texttt{logs}.}
+    \label{fig:speed-cassandra-logs}
+\end{figure}
+
+\subsubsection{Table \texttt{signature\_alerts}}
+
+La table \texttt{signature\_alerts} stocke les événements détectés par règles de signature. Elle permet de conserver les alertes liées à des outils de scan, à des chemins sensibles ou à des motifs d'attaque connus.
+
+\begin{table}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|p{8cm}|}
+        \hline
+        \textbf{Colonne} & \textbf{Type} & \textbf{Rôle} \\
+        \hline
+        \texttt{source\_ip} & \texttt{text} & IP ayant généré l'alerte. \\
+        \hline
+        \texttt{timestamp} & \texttt{text} & Date de l'événement détecté. \\
+        \hline
+        \texttt{reason} & \texttt{text} & Raison de l'alerte, par exemple détection d'un outil de scan. \\
+        \hline
+        \texttt{request\_path} & \texttt{text} & Chemin demandé par la requête. \\
+        \hline
+        \texttt{threat\_label} & \texttt{text} & Label de menace associé à l'événement. \\
+        \hline
+        \texttt{user\_agent} & \texttt{text} & Agent utilisateur utilisé par la source. \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Structure logique de la table Cassandra \texttt{signature\_alerts}.}
+    \label{tab:speed-signature-alerts-schema}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_table_signature_alerts.png}}
+    \caption{Description Cassandra de la table \texttt{signature\_alerts}.}
+    \label{fig:speed-cassandra-signature-alerts}
+\end{figure}
+
+\subsubsection{Table \texttt{realtime\_threats}}
+
+La table \texttt{realtime\_threats} conserve les menaces détectées en temps réel, notamment les attaques brute force. Elle contient l'adresse IP source, la dernière date observée, les types d'attaque et le score de menace calculé.
+
+\begin{table}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|p{8cm}|}
+        \hline
+        \textbf{Colonne} & \textbf{Type} & \textbf{Rôle} \\
+        \hline
+        \texttt{ip\_source} & \texttt{text} & Adresse IP considérée comme menaçante. \\
+        \hline
+        \texttt{last\_seen} & \texttt{timestamp} & Dernière apparition de l'IP dans le flux. \\
+        \hline
+        \texttt{attack\_types} & \texttt{text} & Type d'attaque détecté, par exemple \texttt{brute\_force}. \\
+        \hline
+        \texttt{threat\_score} & \texttt{int} & Score de dangerosité attribué à l'IP. \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Structure logique de la table Cassandra \texttt{realtime\_threats}.}
+    \label{tab:speed-realtime-threats-schema}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_table_realtime_threats.png}}
+    \caption{Description Cassandra de la table \texttt{realtime\_threats}.}
+    \label{fig:speed-cassandra-realtime-threats}
+\end{figure}
+
+\subsubsection{Table \texttt{volume\_alerts}}
+
+La table \texttt{volume\_alerts} contient les alertes générées lorsqu'une IP dépasse le seuil de volume dans une fenêtre temporelle donnée. Elle est utilisée pour identifier les comportements réseau anormaux.
+
+\begin{table}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|p{8cm}|}
+        \hline
+        \textbf{Colonne} & \textbf{Type} & \textbf{Rôle} \\
+        \hline
+        \texttt{source\_ip} & \texttt{text} & Adresse IP ayant dépassé le seuil. \\
+        \hline
+        \texttt{window\_start} & \texttt{text} & Début de la fenêtre d'analyse. \\
+        \hline
+        \texttt{window\_end} & \texttt{text} & Fin de la fenêtre d'analyse. \\
+        \hline
+        \texttt{created\_at} & \texttt{text} & Date de création de l'alerte. \\
+        \hline
+        \texttt{reason} & \texttt{text} & Raison de l'alerte. \\
+        \hline
+        \texttt{threshold} & \texttt{bigint} & Seuil utilisé pour la détection. \\
+        \hline
+        \texttt{total\_bytes} & \texttt{bigint} & Volume total transféré dans la fenêtre. \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Structure logique de la table Cassandra \texttt{volume\_alerts}.}
+    \label{tab:speed-volume-alerts-schema}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_table_volume_alerts.png}}
+    \caption{Description Cassandra de la table \texttt{volume\_alerts}.}
+    \label{fig:speed-cassandra-volume-alerts}
+\end{figure}
+
+\subsubsection{Table \texttt{threat\_scores}}
+
+La table \texttt{threat\_scores} fournit une vue agrégée par IP. Elle est particulièrement utile pour le tableau de bord, car elle permet d'afficher rapidement les IP les plus critiques.
+
+\begin{table}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|p{8cm}|}
+        \hline
+        \textbf{Colonne} & \textbf{Type} & \textbf{Rôle} \\
+        \hline
+        \texttt{source\_ip} & \texttt{text} & Adresse IP analysée. \\
+        \hline
+        \texttt{last\_seen} & \texttt{text} & Dernière apparition de cette IP. \\
+        \hline
+        \texttt{total\_events} & \texttt{int} & Nombre total d'événements liés à l'IP. \\
+        \hline
+        \texttt{suspicious\_count} & \texttt{int} & Nombre d'événements suspects. \\
+        \hline
+        \texttt{malicious\_count} & \texttt{int} & Nombre d'événements malveillants. \\
+        \hline
+        \texttt{score} & \texttt{int} & Score final attribué à l'IP. \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Structure logique de la table Cassandra \texttt{threat\_scores}.}
+    \label{tab:speed-threat-scores-schema}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/describe_table_threat_scores.png}}
+    \caption{Description Cassandra de la table \texttt{threat\_scores}.}
+    \label{fig:speed-cassandra-threat-scores}
+\end{figure}
+
+\subsection{Validation des données stockées}
+
+Après l'exécution des traitements Spark, les tables Cassandra ont été consultées avec \texttt{cqlsh} afin de vérifier que les résultats étaient bien enregistrés. Les captures suivantes montrent des exemples de lignes stockées dans les tables temps réel.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/realtime_threats_10_rows.png}}
+    \caption{Exemples de menaces temps réel stockées dans \texttt{realtime\_threats}.}
+    \label{fig:speed-realtime-threats-rows}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/signature_alerts_10_rows.png}}
+    \caption{Exemples d'alertes de signatures stockées dans \texttt{signature\_alerts}.}
+    \label{fig:speed-signature-alerts-rows}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\detokenize{figures/Speed Layer- Hamza/Capture Cassandra/volume_alerts_10_rows.png}}
+    \caption{Exemples d'alertes de volume stockées dans \texttt{volume\_alerts}.}
+    \label{fig:speed-volume-alerts-rows}
+\end{figure}
+
+\subsection{Synthèse}
+
+La \textit{Speed Layer} permet donc à RAPID de passer d'une simple collecte de journaux à une analyse temps réel exploitable. Kafka assure l'ingestion continue, Spark applique les traitements de détection par micro-lots, et Cassandra conserve les résultats dans des tables adaptées aux besoins de consultation rapide.
+
+Les trois familles de détection mises en place couvrent des scénarios complémentaires :
+\begin{itemize}
+    \item la détection par signatures pour identifier les outils et motifs d'attaque connus ;
+    \item la détection brute force pour repérer les tentatives répétées depuis une même IP ;
+    \item la détection de volume anormal pour surveiller les transferts excessifs.
+\end{itemize}
+
+Cette couche est essentielle dans l'architecture globale du projet, car elle fournit des alertes quasi immédiates et alimente directement les composants de visualisation et d'API.
