@@ -1,0 +1,557 @@
+\chapter{Couche Batch: Stockage Historique et Service HBase}
+\label{chap:batch-layer}
+
+\providecommand{\batchcell}[1]{\begin{minipage}[t]{\linewidth}#1\end{minipage}}
+\providecommand{\scriptcell}[1]{\resizebox{\linewidth}{!}{\texttt{#1}}}
+\providecommand{\tablehead}[1]{\textcolor{cmdcolor}{\textbf{#1}}}
+
+\definecolor{cmdcolor}{RGB}{0,92,160}
+\definecolor{tableblue}{RGB}{0,72,130}
+\setlength{\arrayrulewidth}{0.45pt}
+
+
+\newsavebox{\cmdboxcontent}
+\newenvironment{cmdbox}{%
+\par\smallskip\noindent\begingroup\setlength{\fboxsep}{4pt}%
+\begin{lrbox}{\cmdboxcontent}%
+\begin{minipage}{0.97\linewidth}\ttfamily\footnotesize\raggedright
+}{%
+\end{minipage}%
+\end{lrbox}%
+\fcolorbox{cmdcolor}{black!4}{\usebox{\cmdboxcontent}}%
+\endgroup\par\smallskip
+}
+
+
+\sloppy
+
+\section{Rôle de la Couche Batch}
+
+La couche batch de RAPID transforme le corpus complet de journaux de cybersécurité en vues historiques réutilisables. Dans une Lambda Architecture, cette couche n'a pas pour objectif de produire une alerte immédiate, mais de calculer des indicateurs stables à partir de l'ensemble des données disponibles \cite{marz2015bigdata}. Elle complète donc la couche speed: les traitements streaming alimentent Cassandra avec l'état récent, tandis que les traitements batch reconstruisent des agrégations historiques et les exposent à travers HBase.
+
+La responsabilité de Chawi dans cette partie concerne principalement le stockage et le service des résultats batch. HDFS conserve les fichiers sources et les sorties Parquet qui permettent de rejouer ou de vérifier les calculs. HBase, hébergé sur le nœud de Chawi à l'adresse \texttt{100.97.208.110}, sert les vues historiques calculées par Spark via le service Thrift \texttt{9090}. Ce découpage respecte le principe de séparation de la Lambda Architecture: HDFS reste la base durable et reconstruisible, Spark produit les vues, et HBase rend ces vues consultables par l'API et le dashboard.
+
+\section{Objectif Technique et Chaîne de Traitement}
+
+L'objectif technique de cette couche est triple. Elle conserve d'abord les logs bruts dans HDFS afin de garder une source historique stable. Elle produit ensuite, avec Spark, des vues analytiques calculées sur l'ensemble du corpus. Enfin, elle matérialise les résultats agrégés dans HBase afin de permettre une lecture rapide par l'API et par le dashboard, sans relancer les jobs Spark à chaque consultation.
+
+La chaîne de traitement suivie par RAPID est donc la suivante: les logs bruts sont stockés dans HDFS, les jobs Spark batch les transforment en résultats Parquet sous \texttt{/data/cybersecurity/batch}, puis les vues prêtes à servir sont insérées dans les tables HBase. L'API et le dashboard consomment ensuite ces tables comme mémoire historique de la plateforme. Cette logique justifie la contribution de Chawi: HBase ne contient pas les journaux bruts, mais des vues orientées requêtes, prêtes à être servies aux composants applicatifs.
+
+La Figure~\ref{fig:hdfs-ui-namenode} vérifie que l'interface Web du NameNode est disponible. Elle confirme que HDFS est actif et accessible avant l'exécution des traitements batch.
+
+\begin{cmdbox}
+NameNode Web UI: http://\textless{}namenode\textgreater{}:9870
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hdfsUI1.png}
+    \caption{Interface Web HDFS montrant l'état du NameNode et la disponibilité du système de fichiers distribué.}
+    \label{fig:hdfs-ui-namenode}
+\end{figure}
+
+\section{Organisation HDFS}
+
+\subsection{Partitions Brutes}
+
+HDFS est utilisé comme stockage durable des journaux bruts \cite{hdfs_docs}. Le projet adopte une convention de partitionnement mensuel sous le répertoire \texttt{/logs}. La zone \texttt{/logs/year=2024/month=XX} correspond donc à l'entrée brute de la couche batch et du replay Kafka. Elle ne doit pas être confondue avec \texttt{/data/cybersecurity/batch}, qui contient les sorties analytiques.
+
+Chaque mois de l'année 2024 possède un fichier \texttt{data.csv}, par exemple:
+
+\begin{itemize}
+    \item \texttt{/logs/year=2024/month=01/data.csv}
+    \item \texttt{/logs/year=2024/month=02/data.csv}
+    \item \texttt{/logs/year=2024/month=12/data.csv}
+\end{itemize}
+
+Cette structure permet aux jobs batch Spark de lire l'ensemble des mois avec le motif \texttt{/logs/year=2024/month=*/data.csv}. Elle permet aussi au producteur Kafka de rejouer les mêmes partitions dans la couche speed. Les partitions HDFS jouent ainsi le rôle de source de vérité: si une table HBase ou Cassandra doit être reconstruite, les calculs peuvent repartir des mêmes fichiers mensuels.
+
+La commande ci-dessous liste les partitions mensuelles sous \texttt{/logs/year=2024}. Cette vérification montre que les journaux bruts sont organisés par mois, ce qui permet de traiter l'année complète ou de rejouer une période précise.
+
+\begin{cmdbox}
+docker exec -it namenode bash\\
+hdfs dfs -ls /logs/year=2024
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hdfspartition.png}
+    \caption{Partitionnement des logs bruts dans HDFS par année et par mois.}
+    \label{fig:hdfs-raw-partitioning}
+\end{figure}
+
+\subsection{Sorties Batch}
+
+Les sorties historiques sont écrites sous \texttt{/data/cybersecurity/batch}. Les scripts Spark de \texttt{spark/batch/} écrivent généralement deux formes de résultat: une sortie Parquet dans HDFS pour l'audit et la reconstruction, puis une table HBase pour le service des vues agrégées. Table~\ref{tab:hdfs-batch-outputs} résume les chemins observés dans le projet.
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.32}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.24\textwidth}|
+    >{\raggedright\arraybackslash}p{0.34\textwidth}|
+    >{\raggedright\arraybackslash}p{0.30\textwidth}|
+}
+    \caption{Sorties batch produites dans HDFS.}
+    \label{tab:hdfs-batch-outputs}\\
+    \hline
+    \tablehead{Job Spark} & \tablehead{Chemin HDFS} & \tablehead{Rôle du résultat} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Job Spark} & \tablehead{Chemin HDFS} & \tablehead{Rôle du résultat} \\
+    \hline
+    \endhead
+    \batchcell{\scriptcell{top10\_malicious\_ips.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/top10\_malicious\_ips}} &
+    Classement des IP sources les plus dangereuses et base du score historique de réputation. \\
+    \hline
+
+    \batchcell{\scriptcell{attack\_path\_analysis.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/attack\_patterns}} &
+    Agrégation des motifs SQLi, XSS, Path Traversal et ToolScan par type d'attaque et étiquette de menace. \\
+    \hline
+
+    \batchcell{\scriptcell{hbase\_threat\_timeline.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/threat\_timeline/}\\\texttt{hourly}\\\texttt{/data/cybersecurity/}\\\texttt{batch/threat\_timeline/}\\\texttt{daily}} &
+    Séries temporelles horaires et journalières des événements par niveau de menace. \\
+    \hline
+
+    \batchcell{\scriptcell{port\_scan\_detection.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/port\_scans}} &
+    Fenêtres de cinq minutes où une IP source contacte plus de vingt ports distincts. \\
+    \hline
+
+    \batchcell{\scriptcell{volume\_by\_threat.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/volume\_by\_threat}} &
+    Statistiques de volume réseau par \texttt{threat\_label}, incluant moyenne, maximum, écart-type et percentile 95. \\
+    \hline
+
+    \batchcell{\scriptcell{multistep\_attack\_detection.py}} &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/views/}\\\texttt{multistep\_attacks}} &
+    Vue enrichie des IP qui combinent reconnaissance, exploitation SQLi et Path Traversal. \\
+    \hline
+
+    Vue intermédiaire &
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/classified\_attacks}} &
+    Entrée Parquet attendue par le détecteur multi-étapes pour regrouper les attaques déjà classifiées. \\
+    \hline
+\end{longtable}
+\endgroup
+
+Cette organisation sépare clairement les fichiers bruts, les sorties analytiques et les vues prêtes à servir. Les fichiers Parquet ne remplacent pas HBase: ils servent de trace technique et de support de recalcul. HBase reçoit uniquement les agrégations nécessaires aux lectures rapides.
+
+Les commandes suivantes montrent le répertoire global \texttt{/data/cybersecurity} puis les dossiers de sortie batch. Le résultat obtenu valide la présence de vues générées par Spark, notamment \texttt{attack\_patterns}, \texttt{port\_scans}, \texttt{threat\_timeline}, \texttt{top\_malicious\_ips}, \texttt{views} et \texttt{volume\_by\_threat}.
+
+\begin{cmdbox}
+hdfs dfs -ls /data/cybersecurity\\
+hdfs dfs -ls /data/cybersecurity/batch
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/spark_batch_output_folders_and_directory_structure.jpeg}
+    \caption{Répertoires HDFS contenant les sorties générées par les traitements batch Spark.}
+    \label{fig:spark-batch-output-folders}
+\end{figure}
+
+\subsection{Zones de Stockage HDFS}
+
+La séparation des zones HDFS clarifie le rôle de chaque répertoire. La zone \texttt{/logs/year=2024/month=XX} correspond aux entrées brutes, tandis que \texttt{/data/cybersecurity/batch} correspond aux résultats analytiques. La zone \texttt{/data/cybersecurity/streaming} peut exister dans l'arborescence, mais elle n'est pas le périmètre principal de ce chapitre.
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.28}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.33\textwidth}|
+    >{\raggedright\arraybackslash}p{0.24\textwidth}|
+    >{\raggedright\arraybackslash}p{0.31\textwidth}|
+}
+    \caption{Zones HDFS utilisées par la couche batch.}
+    \label{tab:hdfs-storage-zones}\\
+    \hline
+    \tablehead{Zone HDFS} & \tablehead{Contenu} & \tablehead{Utilisation} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Zone HDFS} & \tablehead{Contenu} & \tablehead{Utilisation} \\
+    \hline
+    \endhead
+    \batchcell{\texttt{/logs/year=2024/}\\\texttt{month=XX}} &
+    Logs bruts partitionnés &
+    Source batch et replay Kafka \\
+    \hline
+
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch}} &
+    Sorties Parquet &
+    Audit, vérification et reconstruction \\
+    \hline
+
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{batch/views}} &
+    Vues analytiques &
+    Résultats préparés pour exploitation \\
+    \hline
+
+    \batchcell{\texttt{/data/cybersecurity/}\\\texttt{streaming}} &
+    Sorties éventuelles streaming &
+    Hors périmètre principal du chapitre batch \\
+    \hline
+\end{longtable}
+\endgroup
+
+\section{Schéma d'Entrée des Jobs Batch}
+
+Les jobs batch utilisent un schéma explicite afin d'éviter l'inférence automatique et de garder un contrat de données stable avec HDFS. Ce contrat est cohérent avec le chapitre d'architecture: les mêmes attributs alimentent les traitements batch, le replay Kafka et les vues de service.
+
+\begingroup
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.28}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.24\textwidth}|
+    >{\raggedright\arraybackslash}p{0.64\textwidth}|
+}
+    \caption{Schéma d'entrée des traitements batch.}
+    \label{tab:batch-input-schema}\\
+    \hline
+    \tablehead{Champ} & \tablehead{Rôle analytique} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Champ} & \tablehead{Rôle analytique} \\
+    \hline
+    \endhead
+    \texttt{timestamp} & Temps de l'événement, utilisé pour les fenêtres et les séries historiques. \\
+    \hline
+    \texttt{source\_ip} & Adresse source utilisée pour la réputation, les scans et les corrélations. \\
+    \hline
+    \texttt{dest\_ip} & Cible réseau observée dans le journal. \\
+    \hline
+    \texttt{protocol} & Protocole réseau, utile pour filtrer certains comportements comme les scans TCP. \\
+    \hline
+    \texttt{action} & Action observée, par exemple une requête autorisée ou bloquée. \\
+    \hline
+    \texttt{threat\_label} & Classe de menace utilisée pour les agrégations historiques. \\
+    \hline
+    \texttt{log\_type} & Catégorie du journal, utile pour qualifier la source de l'événement. \\
+    \hline
+    \scriptcell{bytes\_transferred} & Volume réseau utilisé dans les statistiques de trafic. \\
+    \hline
+    \texttt{user\_agent} & Champ exploité pour détecter ToolScan et certaines signatures d'outils offensifs. \\
+    \hline
+    \texttt{request\_path} & Chemin HTTP utilisé pour détecter SQLi, XSS et Path Traversal. \\
+    \hline
+\end{longtable}
+\endgroup
+
+Spark lit les partitions HDFS avec une stratégie \textit{HDFS-first}. Si HDFS n'est pas disponible pendant une exécution de développement, les scripts prévoient un repli local vers le chemin local \texttt{/home/jovyan/work/batch/}\linebreak[1]\texttt{cybersecurity\_threat\_detection\_logs.csv}. Dans le déploiement RAPID, le chemin HDFS reste cependant le chemin nominal, car il permet de traiter l'année complète et de reconstruire les sorties de manière reproductible \cite{spark_docs}.
+
+\subsection{Scripts Spark Batch et Responsabilités}
+
+Les scripts du dossier \texttt{spark/batch/} matérialisent la logique analytique de la couche batch. Chaque script lit les logs historiques, construit une vue spécialisée, puis écrit le résultat soit en Parquet dans HDFS, soit dans HBase lorsque la vue doit être consommée rapidement par le service. Cette double sortie donne une traçabilité technique: HDFS permet de vérifier et reconstruire les calculs, tandis que HBase expose les résultats sous forme de lignes directement consultables.
+
+Le script \texttt{ml\_bonus.py} est traité comme un complément expérimental: il entraîne localement un modèle Random Forest sur des caractéristiques simples et sauvegarde des prédictions locales. Il n'est donc pas au cœur du service HBase, contrairement aux scripts qui alimentent les tables \texttt{ip\_reputation}, \texttt{attack\_patterns}, \texttt{threat\_timeline}, \texttt{port\_scans}, \texttt{threat\_volume} et \texttt{multistep\_attacks}.
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.34}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.23\textwidth}|
+    >{\raggedright\arraybackslash}p{0.42\textwidth}|
+    >{\raggedright\arraybackslash}p{0.25\textwidth}|
+}
+    \caption{Synthèse des scripts Spark batch et des vues produites.}
+    \label{tab:spark-batch-scripts}\\
+    \hline
+    \tablehead{Script} & \tablehead{Traitement réalisé} & \tablehead{Sortie HDFS / Table HBase} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Script} & \tablehead{Traitement réalisé} & \tablehead{Sortie HDFS / Table HBase} \\
+    \hline
+    \endhead
+
+    \batchcell{\scriptcell{top10\_malicious\_ips.py}} &
+    Classe les IP sources dont le \texttt{threat\_label} est \texttt{suspicious} ou \texttt{malicious}. Le script ajoute des indicateurs SQLi, XSS, Path Traversal et ToolScan, puis calcule un \texttt{reputation\_score} normalisé entre 0 et 100. &
+    \batchcell{\texttt{batch/top10\_}\\\texttt{malicious\_ips}\\[1mm]\texttt{ip\_reputation}} \\
+    \hline
+
+    \batchcell{\scriptcell{attack\_path\_analysis.py}} &
+    Analyse \texttt{request\_path} et \texttt{user\_agent} avec des signatures SQLi, XSS, Path Traversal et ToolScan. Il agrège les occurrences, les volumes, les IP distinctes et la dernière observation par type d'attaque et niveau de menace. &
+    \batchcell{\texttt{batch/attack\_}\\\texttt{patterns}\\[1mm]\texttt{attack\_patterns}} \\
+    \hline
+
+    \batchcell{\scriptcell{hbase\_threat\_timeline.py}} &
+    Produit une chronologie historique par heure et par jour. Les agrégats stockent le nombre d'événements, le nombre d'IP distinctes et le volume total par \texttt{threat\_label}. &
+    \batchcell{\texttt{batch/threat\_}\\\texttt{timeline/hourly}\\\texttt{batch/threat\_}\\\texttt{timeline/daily}\\[1mm]\texttt{threat\_timeline}} \\
+    \hline
+
+    \batchcell{\scriptcell{port\_scan\_detection.py}} &
+    Filtre les logs TCP, extrait le port de destination et détecte les sources qui contactent plus de vingt ports distincts dans une fenêtre de cinq minutes. &
+    \batchcell{\texttt{batch/port\_scans}\\[1mm]\texttt{port\_scans}} \\
+    \hline
+
+    \batchcell{\scriptcell{volume\_by\_threat.py}} &
+    Corrèle \texttt{bytes\_transferred} avec \texttt{threat\_label}. Le script calcule le nombre d'événements, les volumes moyen, minimum, maximum, total, l'écart-type et le percentile 95. &
+    \batchcell{\texttt{batch/volume\_}\\\texttt{by\_threat}\\[1mm]\texttt{threat\_volume}} \\
+    \hline
+
+    \batchcell{\scriptcell{multistep\_attack\_detection.py}} &
+    Lit la vue \texttt{classified\_attacks} et cherche les IP qui combinent ToolScan, SQLi et Path Traversal. Il enrichit chaque IP avec les compteurs, le volume moyen, le nombre d'événements malveillants et un \texttt{risk\_level}. &
+    \batchcell{\texttt{batch/views/}\\\texttt{multistep\_attacks}\\[1mm]\texttt{multistep\_attacks}} \\
+    \hline
+
+    \batchcell{\texttt{ml\_bonus.py}} &
+    Script bonus local. Il entraîne un Random Forest sur \texttt{bytes\_transferred}, \texttt{protocol}, \texttt{action} et \texttt{log\_type}, évalue accuracy, F1, précision et rappel, puis sauvegarde les prédictions. &
+    \batchcell{\texttt{./data/}\\\texttt{predictions.parquet}\\[1mm]Pas de table HBase} \\
+    \hline
+\end{longtable}
+\endgroup
+
+\section{Service Historique avec HBase}
+
+\subsection{Principe de Modélisation}
+
+HBase est utilisé comme magasin de service historique parce que son modèle orienté lignes, familles de colonnes et clés triables convient aux lectures par identifiant ou par préfixe temporel \cite{hbase_docs}. Les jobs batch se connectent au service Thrift de Chawi avec HappyBase et écrivent les résultats dans des tables HBase. Le contrat opérationnel observé dans les scripts batch utilise la famille de colonnes \texttt{cf}; les qualificateurs de colonnes portent ensuite les métriques calculées par chaque job.
+
+La liste HBase vérifie que les tables de service existent avant que l'API ou le dashboard ne les consultent. Cette sortie illustre les tables historiques utilisées par la couche batch: \texttt{attack\_patterns}, \texttt{ip\_reputation}, \texttt{multistep\_attacks}, \texttt{port\_scans}, \texttt{threat\_timeline} et \texttt{threat\_volume}.
+
+\begin{cmdbox}
+docker exec -it hbase hbase shell\\
+list
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_tables_list.png}
+    \caption{Liste des tables HBase utilisées pour servir les résultats batch historiques.}
+    \label{fig:hbase-tables-list}
+\end{figure}
+
+Le script de création HBase initialise les tables principales de réputation IP, de motifs d'attaque et de chronologie des menaces. Les scripts batch présents dans le projet ajoutent aussi des tables spécialisées pour les scans de ports, les volumes de trafic et les attaques multi-étapes. Ces tables sont documentées ici parce qu'elles appartiennent au même contrat batch/HBase trouvé dans le dépôt.
+
+\subsection{Choix de Modélisation HBase}
+
+HBase n'est pas utilisé pour stocker les logs bruts. Les journaux complets restent dans HDFS, tandis que HBase contient des vues agrégées prêtes à être servies. Ce choix réduit le volume lu par l'API et rend les réponses plus directes pour le dashboard.
+
+La clé de ligne est choisie selon le motif de requête attendu: \texttt{source\_ip} pour la réputation, \texttt{HOURLY|heure|threat\_label} ou \texttt{DAILY|jour|threat\_label} pour la chronologie, \texttt{source\_ip|window\_start} pour les scans de ports, et \texttt{THREAT\_VOL|threat\_label} pour les statistiques de volume. La famille de colonnes \texttt{cf} regroupe les métriques calculées par Spark, ce qui garde un modèle simple et homogène entre les tables.
+
+\subsection{Tables HBase de la Couche Batch}
+
+Table~\ref{tab:hbase-batch-schemas} détaille les schémas HBase utilisés pour servir les résultats historiques. Les clés de ligne sont choisies pour correspondre aux accès attendus: une IP pour la réputation, un type d'attaque pour les motifs, un préfixe temporel pour les séries, ou une fenêtre d'observation pour les scans de ports.
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.34}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.15\textwidth}|
+    >{\raggedright\arraybackslash}p{0.24\textwidth}|
+    >{\raggedright\arraybackslash}p{0.39\textwidth}|
+}
+    \caption{Schémas HBase des vues batch.}
+    \label{tab:hbase-batch-schemas}\\
+    \hline
+    \tablehead{Table} & \tablehead{Clé de ligne et producteur} & \tablehead{Colonnes principales} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Table} & \tablehead{Clé de ligne et producteur} & \tablehead{Colonnes principales} \\
+    \hline
+    \endhead
+
+    \texttt{ip\_reputation} &
+    \batchcell{\texttt{source\_ip}\\\texttt{top10\_malicious\_ips.py}} &
+    \batchcell{\texttt{cf:threat\_count}, \texttt{cf:sqli\_hits}, \texttt{cf:xss\_hits},\\
+    \texttt{cf:traversal\_hits}, \texttt{cf:tool\_hits}, \texttt{cf:avg\_bytes},\\
+    \texttt{cf:reputation\_score}} \\
+    \hline
+
+    \batchcell{\texttt{attack\_}\\\texttt{patterns}} &
+    \batchcell{\texttt{attack\_type|}\\\texttt{threat\_label}\\\texttt{attack\_path\_}\\\texttt{analysis.py}} &
+    \batchcell{\texttt{cf:attack\_type}, \texttt{cf:threat\_label}, \texttt{cf:occurrences},\\
+    \texttt{cf:avg\_bytes}, \texttt{cf:total\_bytes}, \texttt{cf:distinct\_ips},\\
+    \texttt{cf:last\_seen}} \\
+    \hline
+
+    \batchcell{\texttt{threat\_}\\\texttt{timeline}} &
+    \batchcell{\texttt{HOURLY|heure|}\\\texttt{threat\_label}\\\texttt{DAILY|jour|}\\\texttt{threat\_label}\\\texttt{hbase\_threat\_}\\\texttt{timeline.py}} &
+    \batchcell{\texttt{cf:heure} ou \texttt{cf:jour}, \texttt{cf:threat\_label},\\
+    \texttt{cf:event\_count}, \texttt{cf:distinct\_ips}, \texttt{cf:total\_bytes}} \\
+    \hline
+
+    \texttt{port\_scans} &
+    \batchcell{\texttt{source\_ip|}\\\texttt{window\_start}\\\texttt{port\_scan\_detection.py}} &
+    \batchcell{\texttt{cf:source\_ip}, \texttt{cf:distinct\_ports},\\
+    \texttt{cf:total\_connections}, \texttt{cf:window\_start}, \texttt{cf:window\_end}} \\
+    \hline
+
+    \texttt{threat\_volume} &
+    \batchcell{\texttt{THREAT\_VOL|}\\\texttt{threat\_label}\\\texttt{volume\_by\_threat.py}} &
+    \batchcell{\texttt{cf:threat\_label}, \texttt{cf:total\_bytes}, \texttt{cf:avg\_bytes},\\
+    \texttt{cf:min\_bytes}, \texttt{cf:max\_bytes}, \texttt{cf:stddev\_bytes},\\
+    \texttt{cf:p95\_bytes}, \texttt{cf:count}} \\
+    \hline
+
+    \batchcell{\texttt{multistep\_}\\\texttt{attacks}} &
+    \batchcell{\texttt{source\_ip}\\\scriptcell{multistep\_attack\_detection.py}} &
+    \batchcell{\texttt{cf:total\_events}, \texttt{cf:attack\_types}, \texttt{cf:sqli\_hits},\\
+    \texttt{cf:traversal\_hits}, \texttt{cf:tool\_hits}, \texttt{cf:avg\_bytes},\\
+    \texttt{cf:malicious\_count}, \texttt{cf:risk\_level}} \\
+    \hline
+\end{longtable}
+\endgroup
+
+\begingroup
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.28}
+\begin{longtable}{|
+    >{\raggedright\arraybackslash\bfseries}p{0.29\textwidth}|
+    >{\raggedright\arraybackslash}p{0.59\textwidth}|
+}
+    \caption{Usages API/dashboard des vues batch.}
+    \label{tab:hbase-frontend-usage}\\
+    \hline
+    \tablehead{Table HBase} & \tablehead{Usage côté service/dashboard} \\
+    \hline
+    \endfirsthead
+    \hline
+    \tablehead{Table HBase} & \tablehead{Usage côté service/dashboard} \\
+    \hline
+    \endhead
+    \texttt{ip\_reputation} & Score historique et détail de réputation par IP. \\
+    \hline
+    \texttt{attack\_patterns} & Distribution des familles d'attaques détectées. \\
+    \hline
+    \texttt{threat\_timeline} & Graphique chronologique des menaces. \\
+    \hline
+    \texttt{port\_scans} & Comportements de scan détectés. \\
+    \hline
+    \texttt{threat\_volume} & Graphique de volume et statistiques par niveau de menace. \\
+    \hline
+    \texttt{multistep\_attacks} & Vue avancée de corrélation multi-étapes. \\
+    \hline
+\end{longtable}
+\endgroup
+
+\subsection{\texttt{ip\_reputation}}
+
+La table \texttt{ip\_reputation} est la vue historique la plus directement utilisée par le service. Chaque ligne représente une IP source et regroupe les signaux observés dans l'historique complet: volume moyen, score de réputation, indicateurs SQLi, XSS, Path Traversal, outils offensifs et nombre d'événements menaçants. La requête attendue est une lecture directe par \texttt{source\_ip}.
+
+La commande HBase ci-dessous vérifie le schéma de la table et affiche un échantillon des lignes servies. Elle montre que la réputation historique est matérialisée par IP avec \texttt{avg\_bytes}, \texttt{reputation\_score}, \texttt{sqli\_hits}, \texttt{threat\_count}, \texttt{tool\_hits}, \texttt{traversal\_hits} et \texttt{xss\_hits}.
+
+\begin{cmdbox}
+describe 'ip\_reputation'\\
+scan 'ip\_reputation', \{LIMIT =\textgreater{} 5\}
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_ip_reputation.png}
+    \caption{Schéma et exemples de lignes de la table HBase \texttt{ip\_reputation}.}
+    \label{fig:hbase-ip-reputation}
+\end{figure}
+
+Cette table permet à l'API de compléter l'état temps réel par une mémoire historique. Lorsqu'un client demande \texttt{/threats/ip/<ip>}, l'API lit la ligne HBase associée à l'IP et compare ce signal historique aux scores Cassandra afin de produire une décision unique pour le dashboard.
+
+\subsection{\texttt{attack\_patterns}}
+
+La table \texttt{attack\_patterns} stocke les motifs d'attaque extraits des chemins HTTP et des agents utilisateurs. Le job d'analyse des chemins classe les événements avec des expressions régulières pour SQLi, XSS, Path Traversal et ToolScan. La clé composée associe le type d'attaque au niveau de menace, ce qui rend chaque combinaison directement adressable et évite une ligne trop large par type d'attaque. La lecture attendue se fait par famille d'attaque et par \texttt{threat\_label} pour construire une distribution agrégée.
+
+Les colonnes \texttt{cf:occurrences}, \texttt{cf:distinct\_ips}, \texttt{cf:total\_bytes}, \texttt{cf:avg\_bytes} et \texttt{cf:last\_seen} donnent une vue synthétique du comportement historique. Cette modélisation est utile pour expliquer quelles familles d'attaques dominent le corpus et pour alimenter des visualisations agrégées sans relire tous les fichiers HDFS.
+
+\subsection{\texttt{threat\_timeline}}
+
+La table \texttt{threat\_timeline} sert les tendances temporelles. Le job de chronologie HBase produit une évolution historique par heure et par jour, séparée par \texttt{threat\_label}. La lecture attendue se fait par période et par étiquette de menace afin d'alimenter un graphique temporel.
+
+Les commandes suivantes vérifient le schéma de la table et affichent des lignes d'exemple. Cette vérification montre que la table stocke l'évolution journalière par étiquette avec \texttt{event\_count}, \texttt{distinct\_ips}, \texttt{total\_bytes}, \texttt{jour} et \texttt{threat\_label}.
+
+\begin{cmdbox}
+describe 'threat\_timeline'\\
+scan 'threat\_timeline', \{LIMIT =\textgreater{} 5\}
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_threat_timeline.png}
+    \caption{Schéma et exemples de lignes de la table HBase \texttt{threat\_timeline}.}
+    \label{fig:hbase-threat-timeline}
+\end{figure}
+
+\subsection{\texttt{port\_scans}}
+
+La table \texttt{port\_scans} conserve les fenêtres où une source TCP contacte un nombre élevé de ports distincts. Chaque ligne associe une IP source à une fenêtre temporelle et stocke les compteurs nécessaires pour servir directement les résultats de détection de scans de ports. La lecture attendue se fait par \texttt{source\_ip} et \texttt{window\_start}.
+
+La sortie HBase confirme que les agrégations de scans sont bien matérialisées. Elle expose les colonnes \texttt{source\_ip}, \texttt{distinct\_ports}, \texttt{total\_connections}, \texttt{window\_start} et \texttt{window\_end}.
+
+\begin{cmdbox}
+describe 'port\_scans'\\
+scan 'port\_scans', \{LIMIT =\textgreater{} 5\}
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_port_scans.png}
+    \caption{Schéma et exemples de lignes de la table HBase \texttt{port\_scans}.}
+    \label{fig:hbase-port-scans}
+\end{figure}
+
+\subsection{\texttt{threat\_volume}}
+
+La table \texttt{threat\_volume} agrège les octets transférés par niveau de menace et met en évidence les comportements de volume élevé, notamment avec le percentile 95. La lecture attendue se fait par \texttt{threat\_label} afin de comparer les volumes de trafic entre classes de menace.
+
+Les commandes ci-dessous affichent le schéma et un échantillon des statistiques stockées. La table contient les agrégats \texttt{avg\_bytes}, \texttt{count}, \texttt{max\_bytes}, \texttt{min\_bytes}, \texttt{p95\_bytes}, \texttt{stddev\_bytes} et \texttt{total\_bytes} par \texttt{threat\_label}.
+
+\begin{cmdbox}
+describe 'threat\_volume'\\
+scan 'threat\_volume', \{LIMIT =\textgreater{} 5\}
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_threat_volume.png}
+    \caption{Schéma et exemples de lignes de la table HBase \texttt{threat\_volume}.}
+    \label{fig:hbase-threat-volume}
+\end{figure}
+
+\subsection{\texttt{multistep\_attacks}}
+
+La table \texttt{multistep\_attacks} est utilisée par le script \texttt{multistep\_attack\_detection.py}. Elle regroupe les IP qui apparaissent dans plusieurs étapes d'une chaîne d'attaque: reconnaissance par outil, exploitation SQLi et Path Traversal. La lecture attendue se fait par \texttt{source\_ip} afin d'identifier les chaînes d'attaque associées à une origine.
+
+Le résultat obtenu valide le stockage des corrélations multi-étapes pour le service. Il montre des colonnes telles que \texttt{attack\_types}, \texttt{sqli\_hits}, \texttt{traversal\_hits}, \texttt{tool\_hits}, \texttt{avg\_bytes}, \texttt{malicious\_count} et \texttt{risk\_level}. Certaines captures de validation peuvent également afficher des colonnes de présentation comme \texttt{attack\_chain} ou \texttt{ordered\_steps}, utilisées pour rendre la chaîne plus lisible.
+
+\begin{cmdbox}
+describe 'multistep\_attacks'\\
+scan 'multistep\_attacks', \{LIMIT =\textgreater{} 5\}
+\end{cmdbox}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/batch/hbase_multistep_attacks.png}
+    \caption{Schéma et exemples de lignes de la table HBase \texttt{multistep\_attacks}.}
+    \label{fig:hbase-multistep-attacks}
+\end{figure}
+
+Ces tables ne remplacent pas \texttt{ip\_reputation}; elles ajoutent des vues analytiques spécialisées. Elles sont importantes dans la responsabilité de stockage de Chawi parce qu'elles transforment les résultats batch en objets directement lisibles par un service: une ligne HBase représente déjà une décision analytique ou une fenêtre d'intérêt, et non un événement brut.
+
+\section{Validation Expérimentale des Captures}
+
+Les captures intégrées dans ce chapitre ne sont pas décoratives: elles constituent une validation expérimentale de la chaîne de stockage. Les commandes HDFS confirment l'existence des partitions brutes et la présence des sorties Spark batch. Les commandes HBase valident la création des tables de service, leurs schémas et la présence de lignes échantillons. Ensemble, ces vérifications démontrent que les résultats batch sont bien passés d'un stockage analytique reconstruisible vers des vues HBase prêtes à servir.
+
+\section{Flux de Service entre HDFS, Spark et HBase}
+
+Le flux batch suit une séquence stable. Premièrement, Spark lit les partitions HDFS mensuelles depuis \texttt{/logs/year=2024/month=XX}. Deuxièmement, le job applique une agrégation ou une classification: réputation par IP, motifs d'attaque, chronologie, scans de ports, volume ou chaînes multi-étapes. Troisièmement, le résultat est écrit en Parquet sous \texttt{/data/cybersecurity/batch}. Quatrièmement, les métriques utiles au service sont insérées dans HBase via HappyBase et le port Thrift \texttt{9090}.
+
+Ce modèle présente deux avantages. D'une part, les tables HBase restent légères et orientées lecture: elles ne contiennent pas les logs bruts, mais des vues préparées pour l'API. D'autre part, les sorties HDFS restent disponibles pour vérifier les agrégations, comparer deux versions d'un job ou reconstruire une table HBase après une modification du schéma. Chawi assure ainsi le passage entre résultat analytique batch et données prêtes à être servies.
+
+\section{Cohérence avec la Lambda Architecture}
+
+La conception de cette couche batch renforce la cohérence globale de RAPID. HDFS garantit la reproductibilité, Spark fournit le calcul distribué, et HBase matérialise les vues historiques. Cassandra reste le magasin opérationnel de la couche speed, tandis que HBase conserve la mémoire longue issue des traitements complets. L'API peut ensuite fusionner ces deux temporalités pour fournir au dashboard un résultat unique: état récent, réputation historique, score final et recommandation.
+
+Ainsi, la contribution de Chawi dans \texttt{03\_batch\_layer.tex} est centrée sur le stockage et le service des résultats historiques. Les tables HBase ne sont pas de simples copies de fichiers; elles sont des schémas de lecture conçus pour exposer rapidement les résultats batch au reste de la plateforme RAPID.
+
+\fussy
