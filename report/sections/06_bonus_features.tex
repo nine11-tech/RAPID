@@ -1,0 +1,142 @@
+\chapter{Fonctionnalités Bonus et Enrichissements}
+\label{chap:bonus-features}
+
+\providecommand{\bonuscell}[1]{\begin{minipage}[t]{\linewidth}#1\end{minipage}}
+
+\section{Objectif des Fonctionnalités Bonus}
+
+Les fonctionnalités bonus ajoutent une couche d'analyse au-dessus du pipeline principal RAPID. Les chapitres précédents montrent le fonctionnement de la couche batch, de la couche speed et du pont API. Cette partie présente les améliorations qui ne sont pas nécessaires au fonctionnement minimal de la plateforme, mais qui renforcent la valeur analytique du système: classification par apprentissage automatique, corrélation d'attaques multi-étapes et seuil adaptatif côté API.
+
+Ces ajouts suivent la même logique que le reste de l'architecture. Les traitements batch produisent des résultats vérifiables et réutilisables, les résultats sont sauvegardés dans des formats exploitables, puis l'API expose une décision simple pour le dashboard ou pour un analyste. L'objectif n'est donc pas seulement de lancer des scripts supplémentaires, mais de transformer les journaux en indicateurs plus opérationnels.
+
+\section{Classification ML des Journaux}
+
+Le premier bonus est le script \texttt{ml\_bonus.py}. Il entraîne un modèle de classification sur les journaux de cybersécurité afin de prédire le label de menace à partir de caractéristiques simples. Le script est exécuté avec Spark dans le conteneur \texttt{spark-streaming}. Le fichier CSV source est d'abord copié dans l'environnement Spark, puis le job est lancé avec une mémoire limitée pour le driver et l'executor.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 162026.png}}
+    \caption{Copie du dataset dans le conteneur Spark et lancement du script \texttt{ml\_bonus.py}.}
+    \label{fig:bonus-ml-launch}
+\end{figure}
+
+Le traitement utilise les champs \texttt{bytes\_transferred}, \texttt{protocol}, \texttt{action} et \texttt{log\_type}. Les variables catégorielles sont encodées avant l'entraînement, puis le modèle produit un label prédit pour chaque ligne. Dans cette version, le modèle sert surtout de preuve de concept: il montre que RAPID peut intégrer une étape de classification statistique en plus des règles déterministes déjà utilisées par les couches batch et speed.
+
+Pendant l'exécution, Spark signale plusieurs avertissements liés à la mémoire disponible. Ces messages indiquent que certaines partitions ne peuvent pas être mises en cache en mémoire, mais ils n'arrêtent pas le traitement. Ils confirment aussi une contrainte déjà discutée dans l'architecture: les traitements Spark sont sensibles aux ressources disponibles, surtout lorsque le dataset contient plus d'un million de lignes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 171231.png}}
+    \caption{Avertissements mémoire observés pendant l'entraînement Spark du module ML bonus.}
+    \label{fig:bonus-ml-memory}
+\end{figure}
+
+\subsection{Résultats du Modèle}
+
+Après l'entraînement, le script évalue le modèle sur un jeu de test et affiche les métriques principales. La précision globale atteint \texttt{0.9198}, soit \texttt{91.98\%}. Le score F1 pondéré est \texttt{0.8814}, la précision est \texttt{0.8461} et le rappel est \texttt{0.9198}. Ces métriques montrent que le modèle apprend une séparation exploitable entre les classes, même si le résultat doit être interprété avec prudence à cause du déséquilibre possible entre les labels.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 172733.png}}
+    \caption{Évaluation du modèle ML et sauvegarde locale des prédictions au format Parquet.}
+    \label{fig:bonus-ml-results}
+\end{figure}
+
+Le modèle sauvegarde ensuite les prédictions dans le répertoire local \path{/tmp/predictions.parquet}. La sortie indique que \texttt{1,200,639} lignes ont été sauvegardées. Les exemples affichés contiennent l'adresse IP source, le label réel, le label prédit et la valeur numérique de prédiction.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 172927.png}}
+    \caption{Exemples de prédictions générées par le modèle ML bonus.}
+    \label{fig:bonus-ml-samples}
+\end{figure}
+
+Une vérification supplémentaire compare les labels réels et les labels prédits. Dans la capture, certains événements \texttt{malicious} et \texttt{suspicious} sont prédits comme \texttt{benign}. Ce point est important: le bonus ML fonctionne techniquement, mais il ne remplace pas les règles de détection opérationnelles. Il doit plutôt être utilisé comme signal complémentaire, à améliorer avec plus de variables et un meilleur équilibrage des classes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 172908.png}}
+    \caption{Résumé de confusion montrant les erreurs de classification restantes.}
+    \label{fig:bonus-ml-confusion}
+\end{figure}
+
+\subsection{Validation des Fichiers Parquet}
+
+Les fichiers de sortie sont matérialisés sous forme de plusieurs partitions Parquet. Cette organisation correspond au mode d'écriture distribué de Spark: chaque partition produit un fichier \texttt{part-*.snappy.parquet}, accompagné d'un marqueur \texttt{\_SUCCESS}. Ce marqueur confirme que l'écriture s'est terminée correctement.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 172949.png}}
+    \caption{Partitions Parquet produites par le module ML bonus.}
+    \label{fig:bonus-ml-parquet-files}
+\end{figure}
+
+La lecture des fichiers avec DuckDB permet de vérifier que les prédictions sont consultables en dehors de Spark. Cette validation est utile pour l'intégration future: le dashboard, l'API ou un outil d'analyse externe peuvent lire les résultats sans relancer l'entraînement.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/Screenshot 2026-05-07 173244.png}}
+    \caption{Lecture des prédictions Parquet avec DuckDB et contrôle des erreurs de classification.}
+    \label{fig:bonus-ml-duckdb}
+\end{figure}
+
+\section{Corrélation d'Attaques Multi-Étapes}
+
+Le deuxième bonus concerne la détection d'attaques multi-étapes. Une attaque réelle ne se limite pas toujours à un seul événement isolé. Elle peut commencer par un scan d'outil, continuer avec une injection SQL, puis tenter un accès par chemin sensible ou traversal. Le script \texttt{multistep\_attack\_detection.py} cherche donc les adresses IP qui combinent plusieurs familles d'indicateurs.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/2.png}}
+    \caption{Lancement du script \texttt{multistep\_attack\_detection.py} avec \texttt{spark-submit}.}
+    \label{fig:bonus-multistep-command}
+\end{figure}
+
+La règle utilisée dans la capture cible les IP combinant \texttt{ToolScan}, \texttt{SQLi} et \texttt{PathTraversal}. Le résultat identifie \texttt{354} adresses IP multi-étapes. Cette vue est plus expressive qu'un simple compteur d'événements, car elle rapproche plusieurs signaux faibles pour faire émerger un comportement d'attaque plus structuré.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.82\textwidth]{\detokenize{figures/bonus_features/1.png}}
+    \caption{Liste des adresses IP détectées comme multi-étapes.}
+    \label{fig:bonus-multistep-ips}
+\end{figure}
+
+Le résultat enrichi conserve plusieurs colonnes utiles pour la décision: le nombre total d'événements, les types d'attaques observés, les compteurs \texttt{sqli\_hits}, \texttt{traversal\_hits}, \texttt{tool\_hits}, le volume moyen transféré, le nombre d'événements malveillants et le niveau de risque. Les premières lignes sont classées \texttt{CRITICAL}, ce qui montre que la corrélation multi-étapes peut servir de priorité d'investigation.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/3.png}}
+    \caption{Résultat enrichi de la corrélation multi-étapes avec niveau de risque.}
+    \label{fig:bonus-multistep-enriched}
+\end{figure}
+
+\section{Seuil Adaptatif et Décision API}
+
+Le troisième bonus est le seuil adaptatif intégré à l'API. Au lieu d'utiliser uniquement un seuil fixe, l'API calcule un seuil basé sur les scores observés dans une fenêtre récente. Cette approche rend la décision plus flexible: si l'activité normale augmente, le seuil peut monter; si l'activité est faible, un score modéré peut devenir plus significatif.
+
+La réponse de l'endpoint \texttt{/threats/ip/<ip>} inclut le bloc \texttt{adaptive\_threshold}. Ce bloc contient la moyenne des scores sur la fenêtre, le mode de calcul, la durée de fenêtre et le seuil obtenu. L'API retourne ensuite un \texttt{final\_score}, un \texttt{threat\_level} et une \texttt{recommendation}. Dans l'exemple, une IP avec un score faible reçoit la recommandation \texttt{ALLOW}, tandis qu'une IP avec un score de \texttt{79} reçoit \texttt{BLOCK}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/adaptiveBonus1.png}}
+    \caption{Comparaison de deux réponses API utilisant le seuil adaptatif: \texttt{ALLOW} pour une IP faible et \texttt{BLOCK} pour une IP élevée.}
+    \label{fig:bonus-adaptive-comparison}
+\end{figure}
+
+Une autre capture montre le détail de la formule. Le seuil est calculé comme \texttt{avg\_score * 1.5}, avec un plafonnement à \texttt{100}. Dans cet exemple, la moyenne vaut \texttt{14.59}, ce qui produit un seuil de \texttt{21.89}. L'IP demandée possède un \texttt{final\_score} de \texttt{100}, ce qui justifie une décision de blocage.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\detokenize{figures/bonus_features/adaptiveBonus2.png}}
+    \caption{Détail du calcul du seuil adaptatif dans la réponse JSON de l'API.}
+    \label{fig:bonus-adaptive-detail}
+\end{figure}
+
+\clearpage
+
+\section{Synthèse des Apports}
+
+Les bonus ajoutent trois capacités complémentaires à RAPID. Le module ML montre que le corpus peut être utilisé pour entraîner un classifieur et produire des prédictions réutilisables. La corrélation multi-étapes transforme plusieurs indicateurs isolés en un signal de risque plus fort. Le seuil adaptatif améliore la décision API en reliant le score d'une IP au contexte récent de la plateforme.
+
+Ces fonctionnalités ne remplacent pas les composants principaux. Elles les prolongent. La couche batch reste responsable des vues historiques, la couche speed reste responsable des alertes temps réel, et l'API reste le point de fusion. Les bonus démontrent que cette architecture peut évoluer vers des analyses plus avancées sans modifier le principe général de RAPID.
+
+\clearpage
