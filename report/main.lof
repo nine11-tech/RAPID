@@ -1,0 +1,18 @@
+\babel@toc {english}{}\relax 
+\contentsline {figure}{\numberline {1}{\ignorespaces RAPID Lambda Architecture: HDFS stores replayable logs, Kafka carries live events, Spark computes batch and speed views, HBase and Cassandra serve results, and Flask exposes them to the dashboard.}}{4}{figure.caption.5}%
+\contentsline {figure}{\numberline {2}{\ignorespaces Infrastructure layers: Tailscale connects the physical machines, while Docker Swarm provides a shared overlay network for containers.}}{4}{figure.caption.6}%
+\contentsline {figure}{\numberline {3}{\ignorespaces Runtime communication between the machines and services during ingestion, processing, serving, and dashboard visualization.}}{5}{figure.caption.8}%
+\contentsline {figure}{\numberline {4}{\ignorespaces Infrastructure containers on Anass' node, including Kafka, Zookeeper, HDFS, and Flask API services.}}{5}{figure.caption.9}%
+\contentsline {figure}{\numberline {5}{\ignorespaces HDFS raw log partitions used as the historical source of truth for Spark batch jobs and Kafka replay.}}{6}{figure.caption.10}%
+\contentsline {figure}{\numberline {6}{\ignorespaces HBase tables used for the batch layer serving views.}}{7}{figure.caption.12}%
+\contentsline {figure}{\numberline {7}{\ignorespaces Example of the HBase \texttt {ip\_reputation} table used for historical scoring.}}{8}{figure.caption.13}%
+\contentsline {figure}{\numberline {8}{\ignorespaces Kafka topic verification for \texttt {cybersecurity-logs}.}}{9}{figure.caption.14}%
+\contentsline {figure}{\numberline {9}{\ignorespaces Real-time signature detection and Cassandra write path.}}{10}{figure.caption.15}%
+\contentsline {figure}{\numberline {10}{\ignorespaces Real-time threat score computation per source IP.}}{10}{figure.caption.16}%
+\contentsline {figure}{\numberline {11}{\ignorespaces Cassandra keyspace tables used by Spark Streaming and the API.}}{11}{figure.caption.18}%
+\contentsline {figure}{\numberline {12}{\ignorespaces Real-time dashboard showing current threat KPIs, top risky sources, and detection distribution.}}{12}{figure.caption.20}%
+\contentsline {figure}{\numberline {13}{\ignorespaces Batch dashboard showing HBase status, historical KPIs, and threat timeline.}}{13}{figure.caption.21}%
+\contentsline {figure}{\numberline {14}{\ignorespaces Real-time decision queue ranking source IPs by risk evidence and severity.}}{13}{figure.caption.22}%
+\contentsline {figure}{\numberline {15}{\ignorespaces Spark MLlib model evaluation and saved prediction output.}}{14}{figure.caption.23}%
+\contentsline {figure}{\numberline {16}{\ignorespaces Enriched multi-step attack correlation with risk level.}}{15}{figure.caption.24}%
+\contentsline {figure}{\numberline {17}{\ignorespaces Global threat map used to visualize attack origins and trajectories.}}{15}{figure.caption.25}%

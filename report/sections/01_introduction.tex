@@ -1,104 +1,47 @@
 \section{Introduction}
 \label{sec:introduction}
 
-\subsection{Context and Motivation}
+Modern cybersecurity monitoring produces large volumes of heterogeneous logs: firewall events, IDS alerts, application traces, HTTP requests, user-agent strings, actions, transferred bytes, and threat labels. A batch-only system can explain what happened historically, but it cannot alert quickly enough when an attack is active. A streaming-only system gives fresh alerts, but it does not provide the long-term reputation and historical context needed to prioritize decisions. For this reason, the project statement asks for a complete Lambda Architecture: batch processing, speed processing, serving integration, and dashboard visualization.
 
-The rapid growth of networked systems, cloud platforms, web applications, and IoT devices has significantly increased the attack surface exposed to cyber threats. Modern attackers no longer rely only on manual techniques; instead, they often use automated tools, scripted scanners, botnets, and exploit frameworks capable of generating thousands of requests in a short period of time. As a result, cybersecurity monitoring systems must be able to process large volumes of heterogeneous log data while detecting suspicious behavior as early as possible.
+RAPID answers this need by building an end-to-end system around the provided cybersecurity log dataset. The same fields required by the assignment are used throughout the pipeline: \texttt{timestamp}, \texttt{source\_ip}, \texttt{dest\_ip}, \texttt{protocol}, \texttt{action}, \texttt{threat\_label}, \texttt{log\_type}, \texttt{bytes\_transferred}, \texttt{user\_agent}, and \texttt{request\_path}. These fields support both historical analytics and real-time rules: malicious IP ranking, port-scan detection, SQL injection and XSS signature extraction, brute-force detection, abnormal volume detection, and threat scoring.
 
-\vspace{0.8em}
+\subsection{Objectives}
 
-Cybersecurity logs contain valuable information about user activities, network connections, access attempts, transferred data, requested resources, and detected anomalies. These logs can reveal several types of attacks such as brute-force attempts, SQL injections, Cross-Site Scripting attacks, port scanning activities, abnormal data transfers, and malicious user-agent signatures. However, the main challenge is not only collecting these logs, but also analyzing them efficiently at scale.
-
-\vspace{0.8em}
-
-Traditional batch-only approaches are useful for historical analysis and forensic investigation, but they are not sufficient for real-time threat detection. If logs are analyzed only after a long delay, an attacker may already have exploited a vulnerability, moved laterally inside the system, or exfiltrated sensitive data. Therefore, modern cybersecurity platforms need to combine two complementary capabilities: the \textbf{depth of historical analysis} and the \textbf{speed of real-time stream processing}.
-
-\subsection{Problem Statement}
-
-The main problem addressed in this project is how to design and implement a scalable Big Data architecture capable of detecting cybersecurity threats from massive network logs while supporting both historical and real-time analysis.
-
-\vspace{0.8em}
-
-This problem can be summarized through the following question:
-
-\begin{quote}
-\textit{How can we build a Big Data cybersecurity monitoring system that stores large-scale logs, detects historical attack patterns, identifies active threats in real time, and visualizes the results through a unified interface?}
-\end{quote}
-
-To answer this question, the project adopts the \textbf{Lambda Architecture}, which separates data processing into three main layers: a batch layer for historical analysis, a speed layer for real-time detection, and a serving layer for querying and visualizing the results.
-
-\subsection{Dataset Description}
-
-The system was developed and validated using the \textbf{Cybersecurity Threat Detection Logs} dataset. This dataset contains labeled network log entries describing different events observed in a network environment. Each record includes several important fields such as the event timestamp, source IP address, destination IP address, protocol, action, threat label, log type, number of bytes transferred, user-agent, and requested path.
-
-\vspace{0.8em}
-
-These fields provide a rich basis for both rule-based detection and machine-learning-based analysis. For example, the \texttt{source\_ip} field can be used to identify suspicious hosts, the \texttt{request\_path} field can reveal SQL injection or XSS payloads, the \texttt{user\_agent} field can expose automated tools such as \texttt{sqlmap} or \texttt{nikto}, and the \texttt{bytes\_transferred} field can help detect abnormal data transfer patterns.
-
-\subsection{Project Objectives}
-
-The main objective of this project is to build a complete cybersecurity threat detection platform based on Big Data technologies. More specifically, the system aims to achieve the following goals:
+The project objectives are the following:
 
 \begin{itemize}
-    \item \textbf{Store historical cybersecurity logs} in a distributed and scalable way using HDFS;
-    
-    \item \textbf{Analyze historical attack patterns} using Apache Spark batch processing, including malicious IP detection, port scan detection, SQL injection and XSS signature extraction, and traffic volume analysis;
-    
-    \item \textbf{Ingest logs continuously} using Apache Kafka in order to simulate a real-time stream of cybersecurity events;
-    
-    \item \textbf{Detect active threats in real time} using Spark Structured Streaming, including brute-force attacks, known attack signatures, and abnormal data transfer volumes;
-    
-    \item \textbf{Store processed threat intelligence} using HBase for batch views and Apache Cassandra for recent real-time threats;
-    
-    \item \textbf{Expose the results through a REST API} that combines historical and real-time threat information;
-    
-    \item \textbf{Visualize cybersecurity insights} through an interactive HTML/JavaScript dashboard.
+    \item store the historical dataset in HDFS using a partitioned layout suitable for replay and batch analysis;
+    \item compute historical attack patterns with Spark batch jobs;
+    \item store batch views in HBase for fast serving;
+    \item create a Kafka topic named \texttt{cybersecurity-logs} and simulate a continuous log stream;
+    \item detect active threats with Spark Structured Streaming;
+    \item store real-time threats in Cassandra;
+    \item expose historical and active threats through a REST API;
+    \item visualize the system through dashboards showing both historical and active threats.
 \end{itemize}
 
-\subsection{Threat Model and Detection Scope}
+\subsection{Requirement Coverage}
 
-The detection scope of this project focuses on common and observable network-based threats. The implemented detection rules are inspired by well-known cybersecurity practices such as OWASP-style web attack detection and Sigma-like rule logic for identifying suspicious patterns in logs.
+Table~\ref{tab:requirements-coverage} maps the assignment requirements to the RAPID implementation. This table is intentionally placed early because it gives the evaluator a direct checklist of the expected deliverables.
 
-\vspace{0.8em}
-
-The system targets the following categories of threats:
-
-\begin{itemize}
-    \item \textbf{Brute-force attacks:} detected when the same source IP generates multiple failed login attempts within a short time window;
-    
-    \item \textbf{SQL injection attempts:} detected by searching for suspicious payloads and patterns inside the request path, such as quotes, logical conditions, or known SQL injection signatures;
-    
-    \item \textbf{Cross-Site Scripting attacks:} detected by identifying suspicious script-related patterns in web requests;
-    
-    \item \textbf{Port scanning activities:} detected when a source IP attempts to connect to several different destination ports within a limited time window;
-    
-    \item \textbf{Abnormal data transfer:} detected when the volume of transferred data exceeds a predefined threshold in a short period;
-    
-    \item \textbf{Known attack tools:} detected through suspicious user-agent values such as \texttt{sqlmap} or \texttt{nikto}.
-\end{itemize}
-
-\subsection{Proposed Solution}
-
-To meet these objectives, the project proposes a complete Big Data pipeline built around the \textbf{Lambda Architecture}. The \textbf{batch layer} stores historical logs in HDFS and processes them using Apache Spark in order to generate long-term security insights. The \textbf{speed layer} uses Apache Kafka and Spark Structured Streaming to analyze incoming logs in real time and trigger alerts with low latency. The \textbf{serving layer} combines the outputs of both layers and exposes them through a Flask REST API and a web dashboard.
-
-\vspace{0.8em}
-
-This architecture provides a balanced solution that supports scalability, fault tolerance, historical analysis, and near-real-time responsiveness. It also makes the system modular, since each component has a clear responsibility within the global pipeline.
-
-\subsection{Report Structure}
-
-The remainder of this report is organized as follows:
-
-\begin{itemize}
-    \item \textbf{Section~\ref{sec:architecture}} presents the global system architecture and explains the main technology choices;
-    
-    \item \textbf{Section~\ref{sec:batch}} describes the batch layer, including HDFS storage, Spark processing, and HBase batch views;
-    
-    \item \textbf{Section~\ref{sec:speed}} explains the speed layer, including Kafka ingestion, Spark Streaming detection logic, and Cassandra storage;
-    
-    \item \textbf{Section~\ref{sec:serving}} presents the serving layer, the REST API, and the dashboard used for visualization;
-    
-    \item \textbf{Section~\ref{sec:bonus}} discusses the bonus machine learning features and additional improvements;
-    
-    \item \textbf{Section~\ref{sec:conclusion}} concludes the report by summarizing the main achievements and future perspectives.
-\end{itemize}
+\begin{table}[H]
+    \centering
+    \scriptsize
+    \caption{Coverage of the project statement requirements.}
+    \label{tab:requirements-coverage}
+    \begin{tabularx}{\textwidth}{>{\bfseries}p{0.22\textwidth} X X}
+        \toprule
+        Requirement & Expected by assignment & RAPID implementation \\
+        \midrule
+        Batch storage & HDFS folders partitioned by date & HDFS raw log partitions under \texttt{/logs/year=2024/month=XX/data.csv}; timestamps preserve day-level analysis and can be replayed by period. \\
+        Batch analytics & Top malicious IPs, port scans, attack paths, volume by threat & Spark jobs compute IP reputation, port scans in 5-minute TCP windows, SQLi/XSS/path traversal/tool patterns, threat timeline, and bytes by threat label. \\
+        Batch serving & HBase tables for reputation, patterns, timeline & HBase tables: \texttt{ip\_reputation}, \texttt{attack\_patterns}, \texttt{threat\_timeline}, \texttt{port\_scans}, \texttt{threat\_volume}, and \texttt{multistep\_attacks}. \\
+        Speed ingestion & Kafka topic with 3 partitions and custom producer & Topic \texttt{cybersecurity-logs}; producer replays HDFS CSV partitions as JSON events using \texttt{source\_ip} as key. \\
+        Real-time detection & Brute force, signatures, abnormal volume, score by IP & Spark Streaming jobs detect 5+ blocked attempts per minute, SQLMap/Nikto/Nmap/injection signatures, traffic-volume anomalies, and aggregate threat scores. \\
+        Active threat store & Cassandra schema for recent threats & Cassandra keyspace \texttt{cybersecurity} with \texttt{logs}, \texttt{realtime\_threats}, \texttt{signature\_alerts}, \texttt{volume\_alerts}, and \texttt{threat\_scores}. \\
+        Integration & API merging batch and speed results & Flask endpoint \texttt{/threats/ip/<ip>} combines HBase historical score and Cassandra active state, then returns score, level, and recommendation. \\
+        Visualization & Dashboard for historical and active threats & HTML/JS dashboards show KPIs, timelines, IP reputation, port scans, attack patterns, active alerts, top risky sources, and a threat map. \\
+        Bonus & ML, correlation, geolocation, adaptive scoring & Random Forest classification, multi-step attack correlation, geolocation-oriented map, and adaptive thresholds are documented and demonstrated. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}

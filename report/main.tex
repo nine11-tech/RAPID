@@ -1,4 +1,4 @@
-\documentclass[12pt,a4paper]{report}
+\documentclass[12pt,a4paper]{article}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -21,7 +21,7 @@
 \usetikzlibrary{arrows.meta,positioning,fit,backgrounds,shapes.geometric,calc}
 
 \geometry{margin=2.5cm}
-\onehalfspacing
+\setstretch{1.18}
 \setlist[itemize]{leftmargin=*,itemsep=0.25em}
 \setlist[enumerate]{leftmargin=*,itemsep=0.25em}
 
@@ -46,12 +46,53 @@
 \date{\today}
 
 \begin{document}
+\sloppy
+\setlength{\emergencystretch}{2em}
+\pagenumbering{gobble}
 
-\maketitle
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+
+\includegraphics[width=0.55\textwidth]{figures/ensa_agadir_logo.png}
+
+\vspace{1.2cm}
+
+{\Large \textbf{Ecole Nationale des Sciences Appliquees d'Agadir}\par}
+\vspace{0.4cm}
+{\large Filiere: SITCN2\par}
+{\large Course: Big Data\par}
+
+\vfill
+
+{\Huge \textbf{RAPID}\par}
+\vspace{0.4cm}
+{\LARGE \textbf{Real-time Attack Pattern Identification and Detection}\par}
+\vspace{0.8cm}
+{\Large Big Data Cybersecurity Threat Detection Project\par}
+
+\vfill
+
+\begin{tabular}{rl}
+\textbf{Done by:} & Khalid FAQIR \\
+                 & Anass LAKOUTI \\
+                 & Abderrahmane CHAOUI \\
+                 & Hamza LAHBAL \\
+\textbf{Under supervision of:} & Aimad QAZDAR \\
+\end{tabular}
+
+\vfill
+
+{\large Academic Year 2025--2026\par}
+
+\end{titlepage}
+
+\pagenumbering{roman}
 \tableofcontents
 \listoffigures
 \listoftables
 \clearpage
+\pagenumbering{arabic}
 
 \input{sections/00_abstract}
 \input{sections/01_introduction}

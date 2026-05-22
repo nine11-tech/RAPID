@@ -1,333 +1,67 @@
-\chapter{System Architecture and API Backbone}
-\label{chap:architecture}
+\section{Architecture and Infrastructure}
+\label{sec:architecture}
 
-\section{Scope of the Architecture Work}
+\subsection{Lambda Architecture}
 
-This chapter describes the technical backbone implemented around Kafka, HDFS, and the Flask REST API. In the RAPID platform, the backbone has three responsibilities. First, it provides the ingestion and storage path that keeps the cybersecurity log stream reproducible. Second, it connects the batch and speed computations to a consistent serving model. Third, it exposes the results through a REST interface that can be consumed by the dashboard, integration scripts, and external security tools. The implementation follows a Lambda Architecture because the problem has two distinct requirements: high-throughput historical analytics over a complete log corpus, and low-latency detection over newly arriving events \cite{marz2015bigdata}.
-
-The deployed system is distributed across several team machines connected through a private Tailscale network and a Docker Swarm overlay network. Anass' node hosts Zookeeper, Kafka, the HDFS NameNode/DataNode pair, and the Flask API. Spark jobs run from the Spark profiles, while Cassandra and HBase are hosted on Chawi's node. This separation is important academically and operationally: it demonstrates that the platform is not only a local script pipeline, but a multi-service data architecture with explicit network boundaries, storage responsibilities, and serving interfaces.
-
-\section{Global Architecture}
-
-Figure~\ref{fig:lambda-architecture} presents the high-level flow. The raw dataset is first organized in HDFS as monthly partitions. HDFS is the durable source of truth for replayable cybersecurity events, while Kafka acts as the temporal buffer used by the speed layer. Spark consumes both sides of the architecture: batch jobs scan HDFS to produce historical summaries, and streaming jobs consume Kafka to update real-time Cassandra tables. The Flask API then bridges Cassandra and HBase so that a single endpoint can return both recent state and historical reputation.
+RAPID follows the Lambda Architecture because the system must support two time scales at the same time \cite{marz2015bigdata}. The batch layer reads the complete historical dataset from HDFS and computes stable views. The speed layer consumes new events from Kafka and updates Cassandra with recent threats. The serving layer exposes both types of evidence through an API and dashboard.
 
 \begin{figure}[H]
     \centering
-    \resizebox{\textwidth}{!}{\input{figures/lambda_architecture.tex}}
-    \caption{RAPID Lambda Architecture: HDFS keeps replayable raw logs, Kafka carries the live stream, Spark computes batch and speed views, and the Flask API unifies Cassandra and HBase outputs.}
+    \resizebox{0.92\textwidth}{!}{\input{figures/lambda_architecture.tex}}
+    \caption{RAPID Lambda Architecture: HDFS stores replayable logs, Kafka carries live events, Spark computes batch and speed views, HBase and Cassandra serve results, and Flask exposes them to the dashboard.}
     \label{fig:lambda-architecture}
 \end{figure}
 
-\section{Infrastructure Motivation}
+The architectural decision is important for cybersecurity. Historical reputation prevents an IP from being treated as harmless only because it is currently quiet. Real-time alerts prevent the system from waiting for a future batch job before reacting. The API takes the maximum useful evidence from both layers and returns a decision-ready response.
 
-The infrastructure design was not chosen only for demonstration. A complete RAPID stack contains Kafka, Zookeeper, HDFS, Spark, Cassandra, HBase, Flask, and the dashboard. Running all of these services on one machine creates resource contention in four places: CPU scheduling, memory pressure, disk input/output, and network ports. This is especially visible in a big-data project because Spark can consume large memory while Cassandra and HBase also need stable heap space, and Kafka/HDFS need reliable disk and network throughput. A single laptop can start the stack in a simplified demo, but it cannot represent the behavior of a real analytical platform under sustained ingestion and processing load.
+\subsection{Distributed Infrastructure}
 
-The project therefore uses a distributed deployment where each machine owns a clear role. This makes the system more realistic: ingestion, compute, serving storage, and API access are separated into different nodes, just as a production data platform separates brokers, compute workers, databases, and application gateways. Figure~\ref{fig:single-host-vs-distributed} summarizes the architectural decision.
+The project was deployed as a distributed student cluster rather than a single local script. This improves realism and avoids overloading one machine with Kafka, HDFS, Spark, Cassandra, HBase, API, and dashboard services. Tailscale provides stable private addresses between physical machines, while Docker Swarm provides the shared container network \cite{tailscale_docs,docker_swarm_docs}.
 
 \begin{figure}[H]
     \centering
-    \resizebox{\textwidth}{!}{\input{figures/single_host_vs_distributed.tex}}
-    \caption{From a single overloaded host to a distributed deployment where each machine carries a specialized part of the big-data workload.}
-    \label{fig:single-host-vs-distributed}
+    \resizebox{0.88\textwidth}{!}{\input{figures/tailscale_swarm_layers.tex}}
+    \caption{Infrastructure layers: Tailscale connects the physical machines, while Docker Swarm provides a shared overlay network for containers.}
+    \label{fig:tailscale-swarm}
 \end{figure}
-
-\section{Scrum Planning and Sprint Backlog}
-
-The implementation was managed through a Scrum-style GitHub project board. The backlog was organized around the same technical layers used by the architecture: batch processing, speed processing, serving integration, visualization, documentation, and infrastructure. This helped the team avoid treating the system as one large undifferentiated task. Each card had an owner, a sprint, and a concrete deliverable, which made the distributed deployment easier to coordinate.
-
 
 \begin{table}[H]
     \centering
-    \caption{Scrum backlog summary extracted from the project planning board.}
-    \label{tab:scrum-backlog-summary}
-    \begin{tabularx}{\textwidth}{>{\bfseries}l l X}
+    \small
+    \caption{Distributed service ownership.}
+    \label{tab:deployment}
+    \begin{tabularx}{\textwidth}{>{\bfseries}p{0.15\textwidth} p{0.24\textwidth} X}
         \toprule
-        Sprint & Main theme & Representative deliverables \\
+        Owner & Address & Main services \\
         \midrule
-        Sprint 1 & Batch layer and base infrastructure & Docker environment, partitioned HDFS layout, dataset loading, Spark batch analytics, Cassandra schema, HBase tables, and initial test scripts \\
-        Sprint 2 & Speed layer & Kafka topic validation, cross-node Cassandra access, CSV-to-Kafka replay producer, Spark Structured Streaming writers, brute-force detection, signature detection, abnormal-volume detection, and real-time threat scoring \\
-        Sprint 3 & Integration and delivery & Flask API endpoints, adaptive scoring, top-10 and timeline views, dashboard pages, end-to-end demonstration script, and technical report material \\
-        Sprint 4 & Bonus improvements & MLlib classification, model evaluation, multi-step attack correlation, GeoIP enrichment, and dashboard map visualization \\
+        Anass & \texttt{100.73.216.115} & Kafka, Zookeeper, HDFS NameNode/DataNode, Flask API \\
+        Hamza & \texttt{100.72.34.26} & Spark master and Spark worker for batch and replay work \\
+        Khalid & \texttt{100.127.99.23} & Spark streaming container and real-time detectors \\
+        Chawi & \texttt{100.97.208.110} & Cassandra, HBase, HBase Thrift, dashboard hosting \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Figure~\ref{fig:scrum-board-sprint1} shows the first project-board view. Sprint 1 focused on making the base data platform work: setting up the Docker environment, loading and partitioning the dataset, creating HDFS and HBase structures, and implementing early Spark batch analytics. This sprint reduced the main technical risk because all later work depended on having a stable dataset and reproducible base services.
+This deployment gives each layer a clear responsibility. Kafka and HDFS act as the data backbone. Spark performs computation. HBase and Cassandra store serving views. Flask is the integration point. The dashboard consumes only REST responses and does not connect directly to databases.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{figures/board1.png}
-    \caption{GitHub project board for Sprint 1, focused on the batch layer and base infrastructure.}
-    \label{fig:scrum-board-sprint1}
-\end{figure}
-
-Figure~\ref{fig:scrum-board-sprint2} shows the second sprint. The board moves the work from offline computation to streaming: Kafka validation, real-time replay from CSV, Spark streaming jobs, Cassandra writes, and detectors for brute-force, signature, and volume-based threats. This sprint is also where cross-machine communication became essential because the streaming container, Kafka broker, and Cassandra service were not all on the same host.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/board2.png}
-    \caption{GitHub project board for Sprint 2, focused on Kafka, Spark Streaming, Cassandra writes, and real-time detectors.}
-    \label{fig:scrum-board-sprint2}
-\end{figure}
-
-Figure~\ref{fig:scrum-board-sprint3} shows the third sprint. The tasks shifted toward integration: API endpoints, adaptive scoring, dashboard pages, an end-to-end demo, and the written technical report. This sprint connected the individual layer outputs into a user-facing security monitoring workflow.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/board3.png}
-    \caption{GitHub project board for Sprint 3, focused on API integration, dashboard delivery, demonstration, and reporting.}
-    \label{fig:scrum-board-sprint3}
-\end{figure}
-
-\section{Tailscale and Docker Swarm Infrastructure}
-
-The deployment uses two complementary networking mechanisms. Tailscale provides the private network between physical machines. Docker Swarm provides the container-level overlay network. These two layers solve different problems and are both necessary.
-
-\subsection{Why Tailscale Is Used}
-
-Tailscale gives each team machine a stable private address in the \texttt{100.x.x.x} range. This is important because the team is not working inside a single university data center with fixed servers. The machines may be on different local networks, behind NAT, or connected from different places. Without Tailscale, the team would have to expose ports publicly, configure router forwarding, or constantly change IP addresses in scripts and containers. That would make the deployment fragile and less secure.
-
-With Tailscale, Kafka can be advertised as \texttt{100.73.216.115:9092}, Cassandra can be reached at \texttt{100.97.208.110:9042}, HBase Thrift can be reached at \texttt{100.97.208.110:9090}, and the Flask API can expose \texttt{100.73.216.115:5000}. This makes the distributed infrastructure predictable. It also keeps communication private because the services are intended to be accessed through the Tailscale mesh rather than through public Internet addresses \cite{tailscale_docs}.
-
-\subsection{Why Docker Swarm Is Used}
-
-Docker Compose alone is comfortable for a single host, but RAPID is intentionally multi-host. Docker Swarm adds the cluster concept needed to connect containers across machines \cite{docker_swarm_docs}. The external attachable network \texttt{rapid-overlay} allows containers started by different Compose profiles to communicate through one logical overlay. This means that a Spark container on one machine can reach Kafka on Anass' node and Cassandra on Chawi's node without pretending that all services are local.
-
-The Compose profiles also enforce ownership. Anass starts only the \texttt{anass} profile, Hamza starts \texttt{hamza}, Khalid starts \texttt{khalid}, and Chawi starts \texttt{chawi}. This is cleaner than asking every team member to run the full infrastructure. It also mirrors real deployments where different teams or nodes own different services.
-
-\begin{figure}[H]
-    \centering
-    \resizebox{\textwidth}{!}{\input{figures/tailscale_swarm_layers.tex}}
-    \caption{Infrastructure layers: Tailscale connects the physical machines, while Docker Swarm provides the shared container overlay network.}
-    \label{fig:tailscale-swarm-layers}
-\end{figure}
-
-\subsection{Operational Verification from Docker Screenshots}
-
-The Docker Swarm deployment was verified from the command line by checking both node membership and running containers. Figure~\ref{fig:docker-node-status} shows that the machines were registered in the Swarm membership list. In that capture, some worker nodes appear as \texttt{Down}; this does not invalidate the deployment model, because student laptops can be temporarily offline, suspended, or disconnected from Tailscale when the manager runs \texttt{docker node ls}. For that reason, the stronger operational evidence is the per-machine \texttt{docker ps} output in Figures~\ref{fig:docker-ps-anass}--\ref{fig:docker-ps-chawi}, which shows the actual containers running on each owner machine.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/dockernode.png}
-    \caption{Docker Swarm node list on the manager machine. The list verifies node registration; temporary \texttt{Down} states reflect machine availability at screenshot time.}
-    \label{fig:docker-node-status}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/dockerps1.png}
-    \caption{Docker container status on Anass' machine, showing Kafka, Zookeeper, HDFS NameNode/DataNode, and the Flask API profile.}
-    \label{fig:docker-ps-anass}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/docker_ps_hamza.png}
-    \caption{Docker container status on Hamza's machine, showing the Spark master and Spark worker used for batch processing and Kafka replay work.}
-    \label{fig:docker-ps-hamza}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/docker_ps.png}
-    \caption{Docker container status on Khalid's machine, showing the single Spark streaming container used for real-time detection jobs.}
-    \label{fig:docker-ps-khalid}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{figures/docker_ps_chawi.png}
-    \caption{Docker container status on Chawi's machine, showing Cassandra, HBase, and the Nginx dashboard container for the serving and visualization layer.}
-    \label{fig:docker-ps-chawi}
-\end{figure}
-
-Together, these screenshots support the architectural claim made in the backlog: every member does not need to run the full stack. Anass carries the infrastructure gateway services, Hamza carries Spark batch execution, Khalid carries the lightweight streaming runtime, and Chawi carries the serving databases and dashboard host. The distribution is especially important for machines with lower memory capacity, because Cassandra, HBase, and Spark should not all be forced onto the same laptop during the demonstration.
-
-\subsection{Runtime Communication}
-
-Figure~\ref{fig:runtime-communication} shows how the services communicate during execution. The important point is that no component is isolated: Spark batch jobs read from HDFS and write HBase views, streaming jobs consume Kafka and write Cassandra views, and the Flask API reads both databases to serve the dashboard. The architecture therefore behaves like a small production cluster rather than a monolithic local script.
-
-\begin{figure}[H]
-    \centering
-    \resizebox{\textwidth}{!}{\input{figures/runtime_communication.tex}}
-    \caption{Runtime communication between owner nodes. The arrows represent the main data and query paths used by the RAPID pipeline.}
+    \resizebox{0.88\textwidth}{!}{\input{figures/runtime_communication.tex}}
+    \caption{Runtime communication between the machines and services during ingestion, processing, serving, and dashboard visualization.}
     \label{fig:runtime-communication}
 \end{figure}
 
-\subsection{Physical Deployment}
+\subsection{Operational Evidence}
 
-The physical deployment uses stable private IP addresses instead of assuming that all services run on the same host. Table~\ref{tab:deployment-ownership} summarizes the ownership model. The Anass profile is the entry point of the data backbone because Kafka, HDFS, and the API are the services that connect the other layers together.
-
-\begin{table}[H]
-    \centering
-    \caption{Distributed service ownership in the RAPID deployment.}
-    \label{tab:deployment-ownership}
-    \begin{tabularx}{\textwidth}{>{\bfseries}l l X}
-        \toprule
-        Owner & Tailscale address & Main services \\
-        \midrule
-        Anass & \texttt{100.73.216.115} & Zookeeper, Kafka broker, HDFS NameNode, HDFS DataNode, Flask REST API \\
-        Hamza & \texttt{100.72.34.26} & Spark master, Spark worker, Jupyter/Spark development environment \\
-        Khalid & \texttt{100.127.99.23} & Spark streaming container and real-time detection jobs \\
-        Chawi & \texttt{100.97.208.110} & Cassandra, HBase Thrift service, HBase UI, dashboard hosting \\
-        \bottomrule
-    \end{tabularx}
-\end{table}
-
-This deployment model provides a practical simulation of real-life big-data infrastructure. A production platform normally does not place brokers, distributed storage, compute engines, serving databases, and APIs on one machine. RAPID follows the same principle at project scale. The platform separates concerns, keeps the raw data and derived views rebuildable, and gives every service a clear network endpoint.
-
-\section{Rationale for a Lambda Architecture}
-
-A cybersecurity monitoring system must answer two different classes of questions. Some questions are historical: which IP addresses were repeatedly malicious during the month, which protocols were most affected, and which attack patterns were observed across the dataset? Other questions are operational: did a source IP just trigger a brute-force pattern, is the current volume abnormal, and should the dashboard recommend blocking or monitoring an IP? A single processing model is poorly suited to both workloads. Batch processing provides accuracy and completeness, but it is not optimized for immediate alerts. Pure streaming provides freshness, but it is less convenient for recomputing large historical views when logic changes or when late data is found.
-
-The Lambda Architecture separates these concerns into a batch layer, a speed layer, and a serving layer \cite{marz2011lambda,marz2015bigdata}. RAPID applies this idea as follows:
-
-\begin{itemize}
-    \item The \textbf{batch layer} reads the complete log corpus from HDFS and computes historical indicators such as IP reputation, attack patterns, threat timelines, port-scan summaries, and volume-by-threat statistics.
-    \item The \textbf{speed layer} consumes events from Kafka and updates Cassandra with recent logs, signature alerts, volume alerts, brute-force detections, and threat scores.
-    \item The \textbf{serving layer} exposes both views through Flask. The API does not force the client to know whether an answer is historical or real-time; it joins the relevant evidence and returns a decision-ready JSON document.
-\end{itemize}
-
-This design also supports replay. Since the producer reads HDFS partitions and publishes events to Kafka, the team can replay the dataset into the speed layer after changing a streaming rule. Reproducibility is essential in an academic project because the same dataset can be used to verify each processing stage under controlled conditions.
-
-\section{Technology Choices}
-
-\subsection{Kafka for Ingestion and Decoupling}
-
-Kafka was selected as the ingestion backbone because it is designed for durable, ordered event streams and for decoupling producers from consumers \cite{kafka_docs}. In RAPID, the topic \texttt{cybersecurity-logs} receives JSON events generated from HDFS monthly partitions. The Kafka producer uses \texttt{source\_ip} as the message key, which keeps related events naturally grouped for downstream processing. The producer also maintains a small state file so that an interrupted replay can resume from the last month and line number instead of restarting the full dataset.
-
-The main architectural benefit of Kafka is that it protects the streaming jobs from direct dependency on HDFS reads. Spark streaming jobs consume from Kafka at their own pace, and additional detection jobs can be attached to the same topic without changing the producer. For security analytics, this matters because new detectors are often added iteratively: a brute-force detector, a signature detector, a volume detector, and a score aggregator can all observe the same event stream while writing separate serving tables.
-
-\subsection{HDFS for the Raw, Replayable Dataset}
-
-HDFS is used as the durable storage layer for the raw cybersecurity logs. The current convention stores monthly partitions under paths such as \texttt{/logs/year=2024/month=01/data.csv}. HDFS is appropriate here because it is built for large files, sequential reads, and distributed storage \cite{hdfs_docs}. The partition layout makes it possible to process the complete dataset for batch analytics and to replay selected months through Kafka when validating the speed layer.
-
-The role of HDFS is not only storage capacity. It is also the audit base of the architecture. If a derived table in Cassandra or HBase becomes inconsistent, the raw partitioned data remains available for recomputation. This property is a core reason why Lambda Architecture is useful in analytical systems: derived views can be rebuilt from immutable input data when algorithms evolve.
-
-\subsection{Spark for Unified Batch and Streaming Computation}
-
-Spark was selected because it provides a single programming environment for batch processing and streaming analytics \cite{spark_docs}. The batch jobs in \texttt{spark/batch/} compute historical views such as malicious IP rankings, port scans, attack paths, HBase threat timelines, multi-step attacks, and volume statistics. The streaming jobs in \texttt{spark/streaming/} consume Kafka using Structured Streaming and write results to Cassandra \cite{spark_streaming_docs}.
-
-Using Spark in both layers reduces conceptual fragmentation. The same schema fields, such as \texttt{timestamp}, \texttt{source\_ip}, \texttt{dest\_ip}, \texttt{protocol}, \texttt{action}, \texttt{threat\_label}, \texttt{bytes\_transferred}, \texttt{user\_agent}, and \texttt{request\_path}, are transformed across the batch and speed jobs. This makes the results easier to compare and makes future maintenance simpler.
-
-\subsection{Cassandra for Real-Time Serving Views}
-
-Cassandra was selected for the speed layer serving store because it is a distributed wide-column database optimized for high-write workloads and predictable key-based reads \cite{cassandra_docs}. RAPID's streaming jobs write frequently updated operational views into the \texttt{cybersecurity} keyspace. The Flask API reads from tables such as \texttt{logs}, \texttt{realtime\_threats}, \texttt{signature\_alerts}, \texttt{volume\_alerts}, and \texttt{threat\_scores}.
-
-The data model follows the access patterns of the API. For example, \texttt{/threats/ip/<ip>} reads the latest real-time threat state, score, signature alerts, and volume alerts for a source IP. \texttt{/threats/top10} scans the scoring table and sorts the highest-risk sources for dashboard presentation. The design favors fast operational lookup over ad-hoc relational joins, which is consistent with Cassandra's strengths.
-
-\subsection{HBase for Historical Reputation and Time-Series Views}
-
-HBase was selected for historical and batch-generated views because it provides sparse, versioned, column-family-oriented storage on top of the Hadoop ecosystem \cite{hbase_docs}. In RAPID, HBase stores tables such as \texttt{ip\_reputation}, \texttt{attack\_patterns}, and \texttt{threat\_timeline}. These tables are produced by batch jobs and accessed through the HBase Thrift service from the Flask API.
-
-HBase complements Cassandra rather than replacing it. Cassandra serves recent state generated by the streaming layer, while HBase stores historical evidence computed from the complete dataset. For instance, the API uses HBase \texttt{ip\_reputation} values such as threat counts, SQL injection hits, tool hits, traversal hits, cross-site scripting hits, and average transferred bytes to calculate a normalized historical score. This historical score is then compared with current Cassandra scores to produce a final decision.
-
-\section{Data Flow and Processing Contracts}
-
-The architecture relies on explicit contracts between stages. The ingestion schema contains the timestamp, source and destination IP addresses, protocol, action, threat label, log type, transferred bytes, user agent, and request path. These fields are carried as JSON through Kafka and converted by Spark into typed columns. The base streaming writer persists the raw stream into Cassandra \texttt{logs}; specialized jobs then derive detector-specific tables.
-
-\begin{longtable}{
-    >{\raggedright\arraybackslash\bfseries}p{0.23\textwidth}
-    >{\raggedright\arraybackslash}p{0.29\textwidth}
-    >{\raggedright\arraybackslash}p{0.36\textwidth}
-}
-    \caption{Main data contracts between RAPID components.}
-    \label{tab:data-contracts}\\
-    \toprule
-    Contract & Producer & Consumer or destination \\
-    \midrule
-    \endfirsthead
-    \toprule
-    Contract & Producer & Consumer or destination \\
-    \midrule
-    \endhead
-    HDFS raw partitions & Dataset loader and storage preparation scripts & Kafka replay producer and Spark batch jobs \\
-    Kafka JSON events & \texttt{spark/speed\_layer/}\newline\texttt{kafka\_producer.py} & Spark streaming writer and detection jobs \\
-    Cassandra raw logs & Base streaming writer & API timeline, protocol aggregation, adaptive threshold, geo endpoint \\
-    Cassandra alert views & Signature, brute-force, volume, and score streaming jobs & API threat lookup, recent alerts, top 10, volume endpoint \\
-    HBase historical views & Spark batch jobs & API historical reputation and long-term trend lookup \\
-    REST JSON responses & Flask API & Dashboard, smoke tests, integration tests, and external clients \\
-    \bottomrule
-\end{longtable}
-
-This contract-based design reduces coupling. For example, a new streaming detector can write a new Cassandra view without changing the raw HDFS layout. Similarly, a batch job can improve the HBase reputation formula while the REST endpoint continues to return the same high-level fields to the dashboard.
-
-\section{Flask API as the Serving Bridge}
-
-The Flask API is the integration point between storage systems and client applications \cite{flask_docs}. It runs on Anass' node and connects to Cassandra and HBase through environment-configured hosts. Its purpose is not merely to expose database rows; it transforms distributed evidence into a security decision. Figure~\ref{fig:api-bridge} shows this bridge.
+The deployment was verified with Docker and service-level checks. Figure~\ref{fig:docker-evidence} shows the running containers on the infrastructure node. Similar captures were produced for the Spark and serving nodes, proving that the project is not only theoretical but deployed as a multi-service Big Data platform.
 
 \begin{figure}[H]
     \centering
-    \resizebox{\textwidth}{!}{\input{figures/api_bridge.tex}}
-    \caption{Flask API bridge: operational Cassandra views and historical HBase views are merged into decision-ready JSON responses.}
-    \label{fig:api-bridge}
+    \includegraphics[width=0.84\textwidth]{figures/dockerps1.png}
+    \caption{Infrastructure containers on Anass' node, including Kafka, Zookeeper, HDFS, and Flask API services.}
+    \label{fig:docker-evidence}
 \end{figure}
 
-\subsection{Connection Strategy}
+\subsection{Technology Choices}
 
-The API keeps a persistent Cassandra session with a lightweight health query before reuse. If the session fails, it shuts down the old cluster handle and reconnects. This is useful in a distributed student deployment where containers may restart independently. HBase access is performed through HappyBase over the Thrift port \texttt{9090}. The environment variables \texttt{CASSANDRA\_HOST}, \texttt{HBASE\_HOST}, and \texttt{HDFS\_HOST} allow the same API code to run even if the physical node addresses change.
-
-\subsection{Endpoint Responsibilities}
-
-Table~\ref{tab:api-endpoints} summarizes the endpoints implemented in \texttt{bigdata-api/app.py}. The most important endpoint is \texttt{/threats/ip/<ip>} because it demonstrates the bridge between databases. It queries Cassandra for real-time state and HBase for historical reputation, computes a final score, compares it with the adaptive threshold, and returns a recommendation.
-
-\begin{longtable}{>{\ttfamily}p{0.29\textwidth} p{0.27\textwidth} p{0.34\textwidth}}
-    \caption{Flask API endpoints and their role in the serving layer.}
-    \label{tab:api-endpoints}\\
-    \toprule
-    Endpoint & Main data source & Returned information \\
-    \midrule
-    \endfirsthead
-    \toprule
-    Endpoint & Main data source & Returned information \\
-    \midrule
-    \endhead
-    GET /health & Runtime configuration & API status, backend hosts, HBase port, Cassandra keyspace \\
-    GET /threats/ip/<ip> & Cassandra and HBase & Real-time threats, threat score, signatures, volume alerts, historical reputation, final score, threat level, recommendation \\
-    GET /threats/top10 & Cassandra \texttt{threat\_scores} & Highest scored source IPs with malicious, suspicious, and total event counts \\
-    GET /threats/threshold & Cassandra \texttt{logs} & Rolling 24-hour adaptive threshold and calculation metadata \\
-    GET /threats/recent & Cassandra \texttt{signature\_alerts} & Most recent signature-based alerts \\
-    GET /threats/volume-alerts & Cassandra \texttt{volume\_alerts} & Recent traffic-volume anomalies and detection windows \\
-    GET /threats/by-protocol & Cassandra \texttt{logs} & Total, malicious, and suspicious counts grouped by protocol \\
-    GET /threats/timeline & Cassandra \texttt{logs} & Daily threat counts used by timeline visualizations \\
-    GET /threats/geo/attacks & Cassandra \texttt{logs} and \texttt{threat\_scores} & Public-IP attack arcs with inferred type, severity, geolocation, and score metadata \\
-    \bottomrule
-\end{longtable}
-
-\subsection{Threat Score Fusion}
-
-The \texttt{/threats/ip/<ip>} endpoint follows a clear fusion process. First, it retrieves real-time rows from Cassandra: active threat state, aggregated score, signature alerts, and volume alerts. Second, it retrieves historical HBase reputation for the same IP. Third, it converts the HBase values into a normalized score between 0 and 100. The historical formula gives weight to repeated threat counts, SQL injection indicators, scanner/tool indicators, path traversal, cross-site scripting, and average bytes transferred. Fourth, the endpoint takes the maximum of available real-time and historical scores as the final score.
-
-This maximum-score strategy is intentionally conservative. In security monitoring, an IP should not be considered safe only because one evidence source is quiet. A source can be historically dangerous even if it has no recent alert, or it can be currently dangerous even without long historical presence. Combining the strongest available evidence makes the recommendation more cautious and therefore more appropriate for threat triage.
-
-\subsection{Adaptive Thresholding}
-
-The API includes an adaptive threshold calculation over a rolling 24-hour window. It scans recent Cassandra log rows, converts each event into a normalized score, computes the average score in the window, and sets the threshold using:
-
-\[
-    threshold = \min(avg\_score\_{24h} \times 1.5, 100)
-\]
-
-The score function incorporates the threat label, blocked actions, known offensive tool indicators such as SQLMap or Nmap, path traversal markers, brute-force indicators, XSS markers, and transferred bytes. The endpoint returns both the threshold and metadata such as sample count, reference time, window start, multiplier, and formula. This makes the decision process auditable instead of returning a hidden constant.
-
-\subsection{Recommendation Policy}
-
-The API maps the final score to an operational recommendation using the adaptive threshold. If the final score is above the threshold, the IP is classified as \texttt{HIGH} and the recommendation is \texttt{BLOCK}. If it is at least 70\% of the threshold, it is classified as \texttt{MEDIUM} and the recommendation is \texttt{MONITOR}. Otherwise, it is classified as \texttt{LOW} and the recommendation is \texttt{ALLOW}. This policy is simple enough to explain in a report and practical enough for a dashboard.
-
-\section{Reliability, Reproducibility, and Security Considerations}
-
-Several implementation choices improve the reliability of the backbone:
-
-\begin{itemize}
-    \item The Kafka producer persists replay progress in \texttt{/tmp/kafka\_producer\_state.json}, which prevents complete restart after interruption.
-    \item Spark streaming jobs use checkpoint locations so that streaming progress can be recovered between runs.
-    \item The API reconnects to Cassandra when a session becomes invalid.
-    \item HDFS keeps raw data separate from derived views, making Cassandra and HBase tables rebuildable.
-    \item Docker Compose profiles keep service ownership explicit and reduce the risk of starting conflicting containers on the wrong node.
-\end{itemize}
-
-Security is also considered at the architecture level. The services are intended to communicate over private Tailscale addresses and the Swarm overlay network rather than public interfaces. The API enables broad CORS for dashboard and demonstration convenience, but this should be restricted before production exposure. The geolocation endpoint only maps public source IPs and avoids treating private infrastructure IPs as real attack origins.
-
-\section{Conclusion}
-
-The backbone of RAPID combines Kafka, HDFS, Spark, Cassandra, HBase, and Flask into a coherent Lambda Architecture. Kafka gives the platform a replayable event stream, HDFS preserves the raw dataset, Spark implements both batch and speed computations, Cassandra serves recent operational state, HBase stores historical reputation, and Flask exposes a unified decision API. This architecture is appropriate for cybersecurity analytics because it balances freshness, historical accuracy, reproducibility, and client-facing simplicity.
+Kafka was selected because it decouples producers and streaming consumers \cite{kafka_docs}. HDFS was selected because it stores the raw dataset in a replayable form \cite{hdfs_docs}. Spark was selected because it supports both batch jobs and Structured Streaming with a shared DataFrame API \cite{spark_docs,spark_streaming_docs}. HBase was selected for historical views that are computed by batch jobs and read by the API \cite{hbase_docs}. Cassandra was selected for recent active threats because it supports high write throughput and key-based reads \cite{cassandra_docs}. Flask was selected as a lightweight REST bridge between storage systems and dashboards \cite{flask_docs}.

@@ -1,59 +1,12 @@
 \begin{abstract}
 \noindent
-\textbf{Real-Time Cybersecurity Threat Detection using Lambda Architecture}
+This report presents \textbf{RAPID}, a Big Data cybersecurity monitoring platform designed according to the Lambda Architecture required in the project statement. The system analyzes the \textit{Cybersecurity Threat Detection Logs} dataset and combines three complementary layers: a batch layer for historical attack analysis, a speed layer for real-time detection, and a serving layer for API access and dashboard visualization.
 
-\vspace{0.7em}
+The implemented platform uses HDFS for replayable historical storage, Apache Spark for batch and streaming computation, Apache Kafka for continuous ingestion, HBase for historical serving views, Apache Cassandra for active threats, and a Flask REST API with HTML/JavaScript dashboards for visualization. The batch layer computes malicious IP reputation, port-scan windows, attack path patterns, threat timelines, traffic-volume statistics, and multi-step attack chains. The speed layer detects brute-force attempts, known attack signatures such as SQLMap and Nikto, abnormal traffic volumes, and real-time threat scores per source IP. The serving layer merges historical HBase evidence with recent Cassandra evidence and returns decision-oriented responses with a final score and a recommendation.
 
+The project also includes bonus analytical improvements: a Spark MLlib Random Forest classifier, multi-step attack correlation, geolocation-oriented dashboard views, and adaptive thresholds. The result is a complete academic implementation of a cybersecurity threat detection pipeline that satisfies the required batch, speed, serving, dashboard, and demonstration objectives.
+
+\vspace{0.6em}
 \noindent
-This report presents the design and implementation of a real-time cybersecurity 
-threat detection system based on the \textbf{Lambda Architecture}. In modern 
-networked environments, cyber threats are becoming increasingly sophisticated, 
-frequent, and data-intensive. Traditional batch-only security analysis is no 
-longer sufficient, since it mainly provides delayed insights after incidents 
-have already occurred. To address this limitation, our system combines 
-\textbf{historical batch processing} with \textbf{low-latency stream processing}, 
-allowing both deep forensic analysis and near-real-time threat detection.
-
-\vspace{0.8em}
-
-\noindent
-The proposed solution relies on a complete Big Data pipeline composed of several 
-industry-proven technologies:
-
-\begin{itemize}
-    \item \textbf{Apache Kafka} for continuous log ingestion and event streaming;
-    \item \textbf{Apache Spark} for batch analytics and real-time stream processing;
-    \item \textbf{HDFS} for distributed storage of historical cybersecurity logs;
-    \item \textbf{HBase} for serving precomputed batch views;
-    \item \textbf{Apache Cassandra} for storing active and recent threats;
-    \item \textbf{Flask REST API} and an \textbf{HTML/JS dashboard} for unified visualization.
-\end{itemize}
-
-\vspace{0.5em}
-
-\noindent
-The system is able to detect several categories of network threats, including 
-\textbf{brute-force attacks}, \textbf{SQL injection attempts}, 
-\textbf{port scanning activities}, and \textbf{abnormal data transfer patterns}. 
-The real-time layer achieves an end-to-end alert latency of less than 
-\textbf{five seconds}, making the platform suitable for fast security monitoring 
-and incident response. In addition, a bonus \textbf{Random Forest} classifier was 
-trained using MLlib on labeled log data and achieved \textbf{92\% classification 
-accuracy}. This machine learning experiment also revealed important 
-\textbf{class-imbalance issues} through DuckDB-based exploratory analysis.
-
-\vspace{0.8em}
-
-\noindent
-Overall, this project demonstrates how a well-designed Big Data architecture can 
-serve as the foundation of a cybersecurity monitoring platform. By combining 
-scalability, fault tolerance, historical intelligence, and real-time responsiveness, 
-the proposed system provides a practical approach for detecting and visualizing 
-cybersecurity threats in large-scale environments.
-
-\vspace{0.8em}
-
-\noindent
-\textbf{Keywords:} Cybersecurity, Big Data, Lambda Architecture, Apache Kafka, 
-Apache Spark, HDFS, HBase, Cassandra, Real-Time Detection, Threat Monitoring.
+\textbf{Keywords:} Big Data, Cybersecurity, Lambda Architecture, HDFS, Spark, Kafka, HBase, Cassandra, REST API, Dashboard.
 \end{abstract}
