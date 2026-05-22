@@ -3,96 +3,121 @@
 
 \subsection{Summary of Achievements}
 
-This project successfully delivered a full-stack, production-inspired cybersecurity 
-threat detection platform built on the Lambda Architecture. The following technical 
-milestones were accomplished:
+This project successfully demonstrated the design and implementation of a complete 
+Big Data cybersecurity threat detection platform based on the \textbf{Lambda Architecture}. 
+The main objective was to combine historical analysis and real-time monitoring in order 
+to detect suspicious and malicious network activities efficiently.
 
-\begin{itemize}
-    \item A \textbf{complete Lambda Architecture} was deployed, integrating HDFS, 
-    Apache Kafka, Apache Spark (batch and streaming), HBase, Cassandra, and a 
-    Flask REST API into a coherent data pipeline.
-    
-    \item \textbf{Five distinct threat categories} were implemented with detection 
-    logic covering brute-force attacks, SQL injection, XSS signatures, port scanning, 
-    and abnormal data exfiltration.
-    
-    \item \textbf{Real-time alerting latency} was measured at under five seconds 
-    end-to-end, from log ingestion via Kafka to alert storage in Cassandra.
-    
-    \item The \textbf{batch layer} produced persistent reputation scores and 
-    attack pattern summaries stored in HBase, enabling historical forensics at scale.
-    
-    \item A \textbf{Random Forest classifier} (bonus) achieved 92\% accuracy on 
-    the \texttt{threat\_label} classification task, demonstrating the feasibility 
-    of ML-augmented threat detection within the same pipeline.
-    
-    \item A \textbf{unified REST API} allowed consumers to query both the historical 
-    batch view and the live speed layer for any given source IP, fulfilling the 
-    serving layer requirement of the Lambda Architecture.
-\end{itemize}
+\vspace{0.8em}
+
+The developed system integrates several key Big Data technologies into a coherent 
+end-to-end pipeline. \textbf{HDFS} was used for distributed historical log storage, 
+\textbf{Apache Spark} for both batch and streaming analytics, \textbf{Apache Kafka} 
+for real-time log ingestion, \textbf{HBase} for serving batch views, and 
+\textbf{Apache Cassandra} for storing active threats detected by the speed layer. 
+A \textbf{Flask REST API} and an \textbf{HTML/JavaScript dashboard} were also used 
+to provide a unified interface for querying and visualizing the results.
+
+\vspace{0.8em}
+
+The platform was able to detect several important categories of cybersecurity threats, 
+including \textbf{brute-force attacks}, \textbf{SQL injection attempts}, 
+\textbf{Cross-Site Scripting signatures}, \textbf{port scanning activities}, and 
+\textbf{abnormal data transfer patterns}. The real-time pipeline achieved an 
+end-to-end alerting latency of less than \textbf{five seconds}, which confirms the 
+suitability of the proposed architecture for near-real-time security monitoring.
+
+\vspace{0.8em}
+
+In addition to the rule-based detection mechanisms, a bonus machine learning component 
+was implemented using a \textbf{Random Forest classifier} trained with Spark MLlib. 
+The model achieved \textbf{92\% classification accuracy} on the 
+\texttt{threat\_label} prediction task, showing that machine learning can be integrated 
+into the same Big Data pipeline to enhance threat classification.
 
 \subsection{Lessons Learned}
 
-Several important technical insights emerged during development:
+Several important technical lessons were learned during the development of this project.
 
 \begin{itemize}
-    \item \textbf{Class imbalance is a critical concern in security datasets.} 
-    The DuckDB analysis revealed a significant skew toward \textit{benign} traffic 
-    in the dataset. Without addressing this imbalance (e.g., via SMOTE or 
-    class-weighted training), ML models tend to over-predict the majority class, 
-    yielding misleadingly high accuracy while missing actual threats.
-    
-    \item \textbf{Windowing semantics matter at scale.} Choosing between tumbling 
-    and sliding windows in Spark Streaming has a direct impact on both detection 
-    sensitivity and resource consumption. Brute-force detection required a sliding 
-    window to avoid splitting attack bursts across window boundaries.
-    
-    \item \textbf{Schema design for the speed layer requires careful TTL planning.} 
-    Cassandra's time-to-live (TTL) mechanism is essential for managing the 24-hour 
-    active threat window; without it, the table grows unbounded under sustained 
-    attack simulation.
-    
-    \item \textbf{The Lambda Architecture introduces operational complexity.} 
-    Maintaining two separate code paths (batch and streaming) for similar logic 
-    increases maintenance overhead. This motivates the alternative \emph{Kappa 
-    Architecture}, which processes all data through a single streaming path.
+    \item \textbf{Historical analysis and real-time detection are complementary.} 
+    The batch layer provides deep insights into long-term attack trends, while the 
+    speed layer enables rapid detection of active threats. Combining both layers gives 
+    a more complete view of the security situation.
+
+    \item \textbf{Windowing is critical in stream processing.} 
+    In Spark Streaming, choosing the right time window directly affects the accuracy 
+    of detection rules. For example, brute-force detection requires carefully defined 
+    time windows in order to avoid missing attacks that occur across window boundaries.
+
+    \item \textbf{Storage design affects performance and scalability.} 
+    HBase is suitable for serving historical batch views, while Cassandra is more 
+    appropriate for recent and active threats due to its fast write performance and 
+    support for time-based data expiration.
+
+    \item \textbf{Class imbalance can affect machine learning results.} 
+    The DuckDB analysis showed that the dataset contains a strong imbalance between 
+    benign, suspicious, and malicious traffic. This means that a high accuracy score 
+    does not always guarantee strong detection of minority threat classes.
+
+    \item \textbf{Lambda Architecture is powerful but complex.} 
+    Maintaining separate batch and speed layers improves flexibility and reliability, 
+    but it also introduces additional complexity in development, deployment, and 
+    synchronization between components.
 \end{itemize}
+
+\subsection{Limitations}
+
+Although the implemented solution satisfies the main project objectives, some 
+limitations remain. First, the detection rules are based mainly on predefined 
+thresholds and known attack signatures. This approach is effective for common attacks, 
+but it may miss more advanced or stealthy threats. Second, the machine learning model 
+requires further improvement because class imbalance can reduce its ability to detect 
+minority classes such as malicious and suspicious events. Finally, the current system 
+was tested in a controlled project environment, while a real production deployment 
+would require stronger monitoring, security hardening, and fault-tolerance mechanisms.
 
 \subsection{Future Improvements}
 
-Several enhancements could significantly extend the platform's capabilities:
+Several improvements can be added in future versions of the platform:
 
 \begin{enumerate}
-    \item \textbf{SMOTE for class rebalancing} — Applying Synthetic Minority 
-    Oversampling Technique to the training set would improve the Random Forest 
-    model's recall on \textit{malicious} and \textit{suspicious} classes, reducing 
-    false negatives in production.
-    
-    \item \textbf{Multi-stage attack correlation} — Implementing a stateful event 
-    correlation engine (e.g., using Apache Flink) could detect composite attack 
-    chains such as reconnaissance $\rightarrow$ exploitation $\rightarrow$ lateral 
-    movement, which are invisible to single-event rules.
-    
-    \item \textbf{GeoIP threat mapping} — Integrating a MaxMind GeoLite2 lookup 
-    into the streaming pipeline would enable geographic visualization of attack 
-    origins on the dashboard, adding operational value for SOC analysts.
-    
-    \item \textbf{Adaptive thresholds} — Rather than fixed rule thresholds 
-    (e.g., ``5 failed logins''), a feedback loop based on rolling baseline 
-    statistics per IP subnet would reduce both false positives in noisy environments 
-    and false negatives during low-and-slow attacks.
-    
-    \item \textbf{Migration toward Kappa Architecture} — Replacing the separate 
-    batch layer with a replayable Kafka-based stream would simplify the codebase 
-    while retaining historical reprocessing capability, reducing the operational 
-    burden of maintaining dual pipelines.
+    \item \textbf{Improve machine learning with SMOTE:} 
+    Applying oversampling techniques such as SMOTE could help rebalance the dataset 
+    and improve the detection of minority classes, especially malicious and suspicious 
+    traffic.
+
+    \item \textbf{Add multi-stage attack correlation:} 
+    The system could be extended to detect complex attack chains, such as 
+    reconnaissance followed by exploitation and lateral movement.
+
+    \item \textbf{Integrate GeoIP analysis:} 
+    Mapping source IP addresses to geographic locations would improve the dashboard 
+    by showing the origin of detected threats on a map.
+
+    \item \textbf{Use adaptive thresholds:} 
+    Instead of relying only on fixed thresholds, the system could calculate dynamic 
+    baselines for each network segment or IP address in order to reduce false positives.
+
+    \item \textbf{Explore Kappa Architecture:} 
+    A future version could simplify the architecture by using a replayable Kafka stream 
+    as the main source of truth, reducing the need to maintain two separate processing 
+    paths.
 \end{enumerate}
 
 \subsection{Closing Remarks}
 
-This project demonstrated that modern Big Data tooling, when composed thoughtfully 
-according to the Lambda Architecture, can form the foundation of a credible and 
-extensible cybersecurity detection platform. The combination of deep batch analytics 
-and sub-second streaming detection addresses a genuine operational need, and the 
-modular design of the pipeline ensures that individual components can be upgraded 
-or replaced independently as the threat landscape evolves.
+In conclusion, this project shows that Big Data technologies can provide a strong 
+foundation for modern cybersecurity monitoring. By combining batch processing, 
+real-time stream processing, distributed storage, machine learning, and visualization, 
+the proposed platform offers a practical and scalable approach to detecting network 
+threats.
+
+\vspace{0.8em}
+
+The Lambda Architecture proved to be an effective design choice for this use case, 
+as it balances historical intelligence with real-time responsiveness. The project also 
+highlighted the importance of clean data pipelines, appropriate storage systems, 
+well-defined detection rules, and clear visualizations for cybersecurity analysts. 
+Overall, this work represents a solid foundation for building a more advanced and 
+production-ready threat detection system in the future.

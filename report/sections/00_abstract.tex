@@ -1,34 +1,59 @@
 \begin{abstract}
-    \noindent
-    This report presents the design and implementation of a real-time cybersecurity 
-    threat detection system built on the \textbf{Lambda Architecture}. As cyber threats 
-    grow increasingly sophisticated and voluminous, traditional batch-only approaches 
-    are no longer sufficient to protect modern networked environments. Our system 
-    addresses this challenge by combining historical batch analysis with low-latency 
-    stream processing, enabling both deep forensic insight and near-instantaneous 
-    threat alerting.
+\noindent
+\textbf{Real-Time Cybersecurity Threat Detection using Lambda Architecture}
 
-    \vspace{1em}
-    The architecture leverages a curated pipeline of industry-proven Big Data 
-    technologies: 
-    \begin{itemize}
-        \item \textbf{Apache Kafka} for log ingestion
-        \item \textbf{Apache Spark} for both batch and streaming analytics
-        \item \textbf{HDFS} for distributed historical storage
-        \item \textbf{HBase} for batch view serving
-        \item \textbf{Apache Cassandra} for real-time threat storage
-        \item A \textbf{Flask REST API} with an HTML/JS dashboard for unified threat visualization
-    \end{itemize}
+\vspace{0.7em}
 
-    The system successfully detects multiple categories of network threats — including 
-    brute-force attacks, SQL injection attempts, port scanning activity, and abnormal 
-    data exfiltration — with end-to-end alert latency below five seconds. A bonus 
-    \textbf{Random Forest} classifier, trained with MLlib on labeled log data, achieved 
-    \textbf{92\% classification accuracy}, with critical class-imbalance insights 
-    uncovered through DuckDB analysis.
+\noindent
+This report presents the design and implementation of a real-time cybersecurity 
+threat detection system based on the \textbf{Lambda Architecture}. In modern 
+networked environments, cyber threats are becoming increasingly sophisticated, 
+frequent, and data-intensive. Traditional batch-only security analysis is no 
+longer sufficient, since it mainly provides delayed insights after incidents 
+have already occurred. To address this limitation, our system combines 
+\textbf{historical batch processing} with \textbf{low-latency stream processing}, 
+allowing both deep forensic analysis and near-real-time threat detection.
 
-    \vspace{1em}
-    This project demonstrates how a well-architected Big Data pipeline can serve as 
-    the backbone of a production-grade cybersecurity monitoring platform, balancing 
-    throughput, fault tolerance, and real-time responsiveness.
+\vspace{0.8em}
+
+\noindent
+The proposed solution relies on a complete Big Data pipeline composed of several 
+industry-proven technologies:
+
+\begin{itemize}
+    \item \textbf{Apache Kafka} for continuous log ingestion and event streaming;
+    \item \textbf{Apache Spark} for batch analytics and real-time stream processing;
+    \item \textbf{HDFS} for distributed storage of historical cybersecurity logs;
+    \item \textbf{HBase} for serving precomputed batch views;
+    \item \textbf{Apache Cassandra} for storing active and recent threats;
+    \item \textbf{Flask REST API} and an \textbf{HTML/JS dashboard} for unified visualization.
+\end{itemize}
+
+\vspace{0.5em}
+
+\noindent
+The system is able to detect several categories of network threats, including 
+\textbf{brute-force attacks}, \textbf{SQL injection attempts}, 
+\textbf{port scanning activities}, and \textbf{abnormal data transfer patterns}. 
+The real-time layer achieves an end-to-end alert latency of less than 
+\textbf{five seconds}, making the platform suitable for fast security monitoring 
+and incident response. In addition, a bonus \textbf{Random Forest} classifier was 
+trained using MLlib on labeled log data and achieved \textbf{92\% classification 
+accuracy}. This machine learning experiment also revealed important 
+\textbf{class-imbalance issues} through DuckDB-based exploratory analysis.
+
+\vspace{0.8em}
+
+\noindent
+Overall, this project demonstrates how a well-designed Big Data architecture can 
+serve as the foundation of a cybersecurity monitoring platform. By combining 
+scalability, fault tolerance, historical intelligence, and real-time responsiveness, 
+the proposed system provides a practical approach for detecting and visualizing 
+cybersecurity threats in large-scale environments.
+
+\vspace{0.8em}
+
+\noindent
+\textbf{Keywords:} Cybersecurity, Big Data, Lambda Architecture, Apache Kafka, 
+Apache Spark, HDFS, HBase, Cassandra, Real-Time Detection, Threat Monitoring.
 \end{abstract}
