@@ -1,0 +1,37 @@
+\begin{tikzpicture}[
+    font=\small,
+    panel/.style={draw, rounded corners=6pt, fill=rapidLight, minimum width=7.4cm, minimum height=9.2cm},
+    title/.style={font=\bfseries, align=center},
+    service/.style={draw, rounded corners=4pt, align=center, text width=5.25cm, minimum height=0.88cm, fill=white},
+    host/.style={draw, rounded corners=4pt, align=center, text width=4.05cm, minimum height=1.35cm, fill=white},
+    note/.style={draw, rounded corners=4pt, align=center, text width=5.7cm, minimum height=1.08cm, fill=white},
+    arrow/.style={-{Latex[length=2.6mm]}, thick, rapidGreen, shorten >=4pt, shorten <=4pt}
+]
+
+\node[panel] (singlePanel) at (0,0) {};
+\node[title] at (0,3.85) {Single-host prototype};
+
+\node[service, fill=rapidOrange!12] at (0,2.85) {Kafka and Zookeeper};
+\node[service, fill=rapidBlue!10] at (0,1.78) {HDFS NameNode\\and DataNode};
+\node[service, fill=rapidBlue!10] at (0,0.71) {Spark batch and streaming};
+\node[service, fill=rapidOrange!12] at (0,-0.36) {Cassandra and HBase};
+\node[service, fill=rapidGreen!12] at (0,-1.43) {Flask API and dashboard};
+\node[note, draw=rapidRed, fill=rapidRed!8] at (0,-3.18) {All workloads compete for CPU, memory, disk I/O, and ports};
+
+\node[note, draw=rapidGreen, fill=rapidGreen!8, text width=4.45cm] (decision) at (7.2,0) {Scale out by\\service\\responsibility};
+
+\node[panel, minimum width=11.3cm] (distPanel) at (16.4,0) {};
+\node[title] at (16.4,3.85) {Distributed RAPID deployment};
+
+\node[host, fill=rapidGreen!12] at (13.55,2.30) {Anass\\Kafka, HDFS, Flask API};
+\node[host, fill=rapidBlue!10] at (19.25,2.30) {Hamza\\Spark master\\and worker};
+\node[host, fill=rapidBlue!10] at (13.55,0.45) {Khalid\\Spark streaming\\detectors};
+\node[host, fill=rapidOrange!12] at (19.25,0.45) {Chawi\\Cassandra, HBase\\dashboard};
+
+\node[note, fill=white, text width=8.6cm] at (16.4,-1.55) {Tailscale connects the machines; Docker Swarm connects the containers};
+\node[note, draw=rapidGreen, fill=rapidGreen!8, text width=8.6cm] at (16.4,-3.18) {Ingestion, compute,\\serving storage, and API\\access are separated};
+
+\draw[arrow] (singlePanel.east) -- (decision.west);
+\draw[arrow] (decision.east) -- (distPanel.west);
+
+\end{tikzpicture}

@@ -1,0 +1,45 @@
+\begin{tikzpicture}[
+    font=\small,
+    box/.style={draw, rounded corners=3pt, align=center, minimum height=1.0cm, text width=3.0cm, fill=white},
+    store/.style={draw, cylinder, shape border rotate=90, aspect=0.22, align=center, minimum height=1.15cm, text width=2.8cm, fill=white},
+    layer/.style={draw, rounded corners=5pt, dashed, inner xsep=0.35cm, inner ysep=0.28cm},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, shorten >=2pt, shorten <=2pt},
+    streamline/.style={arrow, rapidOrange},
+    batchline/.style={arrow, rapidBlue},
+    serveline/.style={arrow, rapidGreen}
+]
+
+\node[box, fill=rapidLight] (dataset) at (0,0) {Cybersecurity\\CSV logs};
+\node[store, fill=rapidLight] (hdfs) at (3.9,0) {HDFS\\raw partitions};
+
+\node[box, fill=rapidOrange!12] (producer) at (7.4,1.75) {Kafka replay\\producer};
+\node[box, fill=rapidOrange!12] (kafka) at (11.0,1.75) {Kafka topic\\\texttt{cybersecurity}\\\texttt{logs}};
+\node[box, fill=rapidOrange!12] (streamjob) at (14.6,1.75) {Spark Structured\\Streaming jobs};
+\node[store, fill=rapidOrange!12] (cassandra) at (18.2,1.75) {Cassandra\\real-time views};
+
+\node[box, fill=rapidBlue!10] (batchspark) at (8.4,-1.75) {Spark batch\\analytics};
+\node[store, fill=rapidBlue!10] (hbase) at (12.4,-1.75) {HBase\\historical views};
+
+\node[box, fill=rapidGreen!12] (api) at (18.2,-1.75) {Flask REST API\\serving bridge};
+\node[box, fill=rapidGreen!12] (dashboard) at (22.0,-1.75) {Dashboard and\\client queries};
+
+\draw[arrow] (dataset) -- (hdfs);
+\draw[streamline] (hdfs.north) |- (producer.west);
+\draw[streamline] (producer) -- (kafka);
+\draw[streamline] (kafka) -- (streamjob);
+\draw[streamline] (streamjob) -- (cassandra);
+
+\draw[batchline] (hdfs.south) |- (batchspark.west);
+\draw[batchline] (batchspark) -- (hbase);
+
+\draw[serveline] (cassandra.south) -- (api.north);
+\draw[serveline] (hbase) -- (api);
+\draw[serveline] (api) -- (dashboard);
+
+\begin{scope}[on background layer]
+    \node[layer, fit=(producer)(kafka)(streamjob)(cassandra), label={[rapidOrange]above:Speed layer}] {};
+    \node[layer, fit=(batchspark)(hbase), label={[rapidBlue]below:Batch layer}] {};
+    \node[layer, fit=(api)(dashboard), label={[rapidGreen]below:Serving layer}] {};
+\end{scope}
+
+\end{tikzpicture}

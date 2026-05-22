@@ -1,0 +1,33 @@
+\begin{tikzpicture}[
+    font=\small,
+    layer/.style={draw, rounded corners=6pt, minimum width=19.0cm, minimum height=2.35cm, fill=white},
+    layername/.style={font=\bfseries, align=center},
+    host/.style={draw, rounded corners=4pt, align=center, text width=3.35cm, minimum height=0.95cm, fill=white},
+    service/.style={draw, rounded corners=4pt, align=center, text width=3.25cm, minimum height=1.08cm, fill=white},
+    overlay/.style={draw, rounded corners=4pt, align=center, text width=15.4cm, minimum height=0.92cm, fill=rapidBlue!10},
+    mesh/.style={thick, rapidGreen}
+]
+
+\node[layer, fill=rapidGreen!8] at (0,3.85) {};
+\node[layername] at (0,4.65) {Layer 1: Tailscale host mesh};
+\node[host, fill=rapidLight] (anassIp) at (-7.05,3.55) {Anass\\100.73.216.115};
+\node[host, fill=rapidLight] (hamzaIp) at (-2.35,3.55) {Hamza\\100.72.34.26};
+\node[host, fill=rapidLight] (khalidIp) at (2.35,3.55) {Khalid\\100.127.99.23};
+\node[host, fill=rapidLight] (chawiIp) at (7.05,3.55) {Chawi\\100.97.208.110};
+
+\draw[mesh] (anassIp.east) -- (hamzaIp.west);
+\draw[mesh] (hamzaIp.east) -- (khalidIp.west);
+\draw[mesh] (khalidIp.east) -- (chawiIp.west);
+
+\node[layer, fill=rapidBlue!8] at (0,0.55) {};
+\node[layername] at (0,1.35) {Layer 2: Docker Swarm overlay};
+\node[overlay] (rapidOverlay) at (0,0.25) {\texttt{rapid-overlay}: shared container network across the four machines};
+
+\node[layer, fill=rapidOrange!8] at (0,-2.85) {};
+\node[layername] at (0,-2.05) {Layer 3: RAPID containers};
+\node[service, fill=rapidGreen!12] (anassSvc) at (-7.05,-3.15) {Kafka\\HDFS\\Flask API};
+\node[service, fill=rapidBlue!10] (hamzaSvc) at (-2.35,-3.15) {Spark master\\Spark worker};
+\node[service, fill=rapidBlue!10] (khalidSvc) at (2.35,-3.15) {Spark streaming\\detectors};
+\node[service, fill=rapidOrange!12] (chawiSvc) at (7.05,-3.15) {Cassandra\\HBase\\Dashboard};
+
+\end{tikzpicture}
