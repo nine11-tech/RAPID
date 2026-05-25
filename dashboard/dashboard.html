@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAPID — Threat Intelligence Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;600;700;800&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+</head>
+
+<body>
+
+  <!-- Scanline overlay -->
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <!-- Map Loading overlay -->
+  <div id="map-loading" class="map-loading">
+    <div class="map-spin"></div>
+    <div class="map-load-txt">LOADING WORLD MAP…</div>
+  </div>
+
+  <!-- Tooltip for map attacks -->
+  <div class="map-tip" id="map-tip">
+    <div class="map-tip-title" id="map-tip-title"></div>
+    <div id="map-tip-body"></div>
+  </div>
+
+  <!-- Top header bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-mark">
+        <span class="logo-bracket">[</span>
+        <span class="logo-text">RAPID</span>
+        <span class="logo-bracket">]</span>
+      </div>
+      <div class="logo-sub">Real-time Attack Pattern Identification & Detection</div>
+      <div class="nav-links" style="margin-left: 2rem;">
+        <a href="batch.html" class="btn btn-primary">
+          Batch Analytics
+        </a>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-group">
+        <span class="dot" id="dot-api"></span>
+        <span class="status-label" id="status-api">Connecting…</span>
+      </div>
+
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="refresh-badge">
+        <span class="refresh-icon">↻</span>
+        <span>5s</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Error banner -->
+  <div class="error-banner" id="error-banner" hidden>
+    <span class="err-icon">⚠</span>
+    <span id="error-msg">API unreachable — retrying…</span>
+    <button id="error-dismiss" type="button" aria-label="Dismiss API warning"
+      onclick="window.errorDismissed=true; document.getElementById('error-banner').hidden=true">✕</button>
+  </div>
+
+  <!-- Controls Bar -->
+  <section class="controls-bar">
+    <div class="search-group">
+      <input type="text" id="ip-search" placeholder="Search IP address..." class="search-input">
+      <button onclick="searchIP()" class="btn btn-primary">Search</button>
+      <button onclick="clearSearch()" class="btn btn-secondary">Clear</button>
+    </div>
+    <div class="controls-group">
+      <button id="pause-btn" onclick="togglePolling()" class="btn btn-icon" title="Pause/Resume">
+        <span id="pause-icon">⏸</span>
+      </button>
+      <button onclick="refreshNow()" class="btn btn-icon" title="Refresh Now">↻</button>
+      <button onclick="exportData()" class="btn btn-icon" title="Export Data">⬇</button>
+    </div>
+  </section>
+
+  <!-- IP Detail Modal -->
+  <div id="ip-modal" class="modal" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-ip">IP Details</h3>
+        <button onclick="closeModal()" class="modal-close">×</button>
+      </div>
+      <div id="modal-body" class="modal-body">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">Threat Level</div>
+            <div id="modal-threat-level" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Recommendation</div>
+            <div id="modal-recommendation" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Threat Score</div>
+            <div id="modal-score" class="detail-value">—</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">Historical Score</div>
+            <div id="modal-historical" class="detail-value">—</div>
+          </div>
+        </div>
+        <div id="modal-alerts" class="modal-alerts"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI strip -->
+  <section class="kpi-strip container">
+    <div class="kpi-card" id="kpi-total">
+      <div class="kpi-value" id="kpi-total-val">—</div>
+      <div class="kpi-label">Threats Detected</div>
+    </div>
+    <div class="kpi-card kpi-accent" id="kpi-top">
+      <div class="kpi-value" id="kpi-top-val">—</div>
+      <div class="kpi-label">Top Attacker Score</div>
+    </div>
+    <div class="kpi-card" id="kpi-ips">
+      <div class="kpi-value" id="kpi-ips-val">—</div>
+      <div class="kpi-label">Unique IPs Tracked</div>
+    </div>
+    <div class="kpi-card" id="kpi-last">
+      <div class="kpi-value" id="kpi-last-val">—</div>
+      <div class="kpi-label">Last Activity</div>
+    </div>
+    <div class="kpi-card" id="kpi-threshold">
+      <div class="kpi-value" id="kpi-threshold-val">—</div>
+      <div class="kpi-label">Alert Threshold</div>
+    </div>
+    <div class="kpi-card" id="kpi-volume">
+      <div class="kpi-value" id="kpi-volume-val">—</div>
+      <div class="kpi-label">Volume Alerts</div>
+    </div>
+  </section>
+
+  <!-- Main grid -->
+  <main class="grid container">
+
+    <!-- Top 10 IPs bar chart -->
+    <section class="card card-wide">
+      <div class="card-header">
+        <div class="card-title">
+          Top Realtime Risk Sources
+        </div>
+        <div class="card-meta" id="top10-meta">—</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartTop10"></canvas>
+      </div>
+    </section>
+
+    <!-- Live Detection Mix -->
+    <section class="card card-wide">
+      <div class="card-header">
+        <div class="card-title">
+          Live Detection Mix
+        </div>
+        <div class="card-meta" id="protocol-meta">—</div>
+      </div>
+      <div class="chart-wrap chart-small">
+        <canvas id="chartProtocol"></canvas>
+      </div>
+    </section>
+
+    <!-- Threat Map (D3 Interactive) -->
+    <section class="card card-full threatmap-card">
+      <div class="card-header threatmap-header">
+        <div class="card-title">
+          Global Threat Map
+        </div>
+        <div class="threatmap-stats">
+          <div class="tm-stat tm-c-acc"><span class="tm-stat-n" id="tm-s-total">0</span><span
+              class="tm-stat-l">Total</span></div>
+          <div class="tm-stat tm-c-red"><span class="tm-stat-n" id="tm-s-crit">0</span><span
+              class="tm-stat-l">Critical</span></div>
+          <div class="tm-stat tm-c-ylw"><span class="tm-stat-n" id="tm-s-med">0</span><span
+              class="tm-stat-l">Medium</span></div>
+          <div class="tm-stat tm-c-grn"><span class="tm-stat-n" id="tm-s-low">0</span><span class="tm-stat-l">Low</span>
+          </div>
+        </div>
+        <div class="threatmap-controls">
+          <div class="live-badge">LIVE</div>
+          <button class="btn btn-small" id="tm-btn-all">All</button>
+          <button class="btn btn-small" id="tm-btn-hi">High</button>
+          <button class="btn btn-small" id="tm-btn-pause">⏸</button>
+        </div>
+      </div>
+      <div class="threatmap-body">
+        <!-- D3 Map Area -->
+        <div class="tm-map-area" id="tm-map-area">
+          <div class="tm-map-grid"></div>
+          <div class="tm-corner tm-tl"></div>
+          <div class="tm-corner tm-tr"></div>
+          <div class="tm-corner tm-bl"></div>
+          <div class="tm-corner tm-br"></div>
+          <svg id="tm-map-svg"></svg>
+          <div class="tm-coord-bar" id="tm-coord-bar">LAT 0.000 / LNG 0.000</div>
+          <div class="tm-status-bar" id="tm-status-bar"></div>
+        </div>
+        <!-- Attack Feed -->
+        <div class="tm-feed">
+          <div class="tm-feed-head">
+            <span class="tm-feed-title">Attack Feed</span>
+            <span class="tm-feed-cnt" id="tm-feed-cnt">0</span>
+          </div>
+          <div class="tm-feed-scroll" id="tm-feed-scroll"></div>
+        </div>
+      </div>
+      <div class="threatmap-legend">
+        <div class="tm-legend">
+          <span class="tm-leg-lbl">Severity:</span>
+          <div class="tm-leg-items">
+            <div class="tm-leg-item tm-leg-low">
+              <div class="tm-leg-line"></div>Low
+            </div>
+            <div class="tm-leg-item tm-leg-med">
+              <div class="tm-leg-line"></div>Medium
+            </div>
+            <div class="tm-leg-item tm-leg-high">
+              <div class="tm-leg-line"></div>High/Critical
+            </div>
+          </div>
+        </div>
+        <div class="tm-type-tags" id="tm-type-tags"></div>
+      </div>
+    </section>
+
+    <!-- Attack Timeline -->
+    <section class="card card-wide">
+      <div class="card-header">
+        <div class="card-title">
+          Attack Timeline
+        </div>
+        <div class="card-meta" id="timeline-meta">—</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="chartTimeline"></canvas>
+      </div>
+    </section>
+
+    <!-- Volume Alerts -->
+    <section class="card card-small volume-card">
+      <div class="card-header">
+        <div class="card-title">
+          Volume Alerts
+        </div>
+        <div class="card-meta" id="volume-meta">—</div>
+      </div>
+      <div class="table-wrap table-compact">
+        <table class="threat-table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Bytes</th>
+              <th>Threshold</th>
+            </tr>
+          </thead>
+          <tbody id="volume-table-body">
+            <tr>
+              <td colspan="3" class="table-empty">No volume alerts</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Signature Alerts Feed -->
+    <section class="card card-small signature-card">
+      <div class="card-header">
+        <div class="card-title">
+          Signature Alerts
+        </div>
+        <div class="live-badge">LIVE</div>
+      </div>
+      <div class="alerts-feed" id="signature-feed">
+        <div class="alert-empty">No signature alerts detected</div>
+      </div>
+    </section>
+
+    <!-- Live feed table -->
+    <section class="card card-full">
+      <div class="card-header">
+        <div class="card-title">
+          Realtime Decision Queue
+        </div>
+        <div class="live-badge">LIVE</div>
+      </div>
+      <div class="table-wrap">
+        <table class="threat-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>IP Address</th>
+              <th>Decision Score</th>
+              <th>Evidence Count</th>
+              <th>Severity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="threat-table-body">
+            <tr>
+              <td colspan="6" class="table-empty">Waiting for data…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span>RAPID · nine11-tech · SITCN2 · Université Ibn Zohr ENSA Agadir</span>
+    <span id="footer-updated">Last update: —</span>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+
+</html>
